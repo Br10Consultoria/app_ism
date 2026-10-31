@@ -24,11 +24,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
-      - run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Instalar SDK Android 35
+        run: |
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
       - run: gradle -p android :app:assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
