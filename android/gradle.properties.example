@@ -1,0 +1,5 @@
+# Copie como gradle.properties (ignoradas pelo Git)
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+android.useAndroidX=true
+ismBackendUrl=https://api-ism.exemplo.com.br
+ismTerminalKey=CHAVE_DO_TERMINAL_COM_32_OU_MAIS_CARACTERES

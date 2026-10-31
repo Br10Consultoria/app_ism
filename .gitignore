@@ -1,0 +1,13 @@
+backend/.env
+backend/__pycache__/
+backend/.pytest_cache/
+**/__pycache__/
+*.pyc
+*.iml
+.gradle/
+build/
+local.properties
+android/gradle.properties
+*.keystore
+*.jks
+.idea/

@@ -1,0 +1,22 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'br.com.ismtelecom.pos'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'br.com.ismtelecom.pos'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+        def url = (project.findProperty('ismBackendUrl') ?: '').toString()
+        def key = (project.findProperty('ismTerminalKey') ?: '').toString()
+        buildConfigField 'String', 'API_BASE', '"' + url.replace('\\', '\\\\').replace('"', '\\"') + '"'
+        buildConfigField 'String', 'TERMINAL_KEY', '"' + key.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    }
+    buildFeatures { buildConfig true }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+
+dependencies { implementation 'com.google.zxing:core:3.5.3' }

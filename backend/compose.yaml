@@ -1,0 +1,18 @@
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ism_leads:/data
+    ports:
+      - "127.0.0.1:8765:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  ism_leads:
