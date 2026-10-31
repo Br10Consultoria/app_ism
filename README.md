@@ -26,4 +26,4 @@ A impressora térmica interna da GPOS780 exige SDK e credenciamento Gertec, não
 3. Configure `ismBackendUrl` e `ismTerminalKey` em `android/gradle.properties` localmente (nunca comite tokens) e gere o APK.
 4. Instale somente em equipamento autorizado; configure o servidor com HTTPS válido.
 
-**Status:** implementação inicial; conexão real com IXC, disponibilidade de Pix e impressão dependem de parâmetros da instalação e de teste homologado. Não há APK compilado/homologado no repositório.
+**Status:** Android compilado e testes unitários do backend aprovados no GitHub Actions. Consulte **Actions → Validar backend e gerar APK de testes → Artifacts → ism-telecom-debug-apk**. O APK gerado pelo CI usa configuração vazia de servidor/chave e serve para validar instalação/interface; para conexão real, gere uma build própria com `android/gradle.properties` configurado. Conexão IXC, disponibilidade dos dados de cobrança, envio comercial e hardware Gertec ainda exigem homologação na instalação.
