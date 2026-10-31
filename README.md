@@ -5,8 +5,8 @@ Aplicativo de consulta de cobranças do ERP **IXC Provedor**, destinado a termin
 ## Fluxos
 - **Pix:** digitar CPF, escolher fatura aberta e visualizar Pix copia e cola / QR Code quando disponível no IXC.
 - **Código de barras:** digitar CPF, escolher fatura e exibir a linha digitável fornecida pelo IXC.
-- **Boleto:** digitar CPF, escolher fatura e abrir o link do PDF fornecido pelo IXC.
-- **Indicar novo cliente:** técnico informa CPF, telefone, nome opcional e consentimento; solicitação é encaminhada ao comercial por webhook HTTPS ou e-mail e auditada localmente.
+- **Boleto:** digitar CPF, escolher fatura e visualizar o PDF ou abrir seu link quando fornecido pelo IXC.
+- **Indicar novo cliente:** técnico informa CPF, telefone, nome opcional e consentimento; solicitação é encaminhada ao comercial por webhook HTTPS ou e-mail.
 
 ## Estrutura
 - `android/`: projeto Android nativo (Java, minSdk 26, targetSdk 35), tela em retrato para POS 720×1280.
@@ -23,7 +23,7 @@ A impressora térmica interna da GPOS780 exige SDK e credenciamento Gertec, não
 ## Começando
 1. Copie `backend/.env.example` para `backend/.env`; informe URL e token IXC, chave do terminal e canal comercial.
 2. Suba o backend seguindo `docs/INSTALACAO.md` e valide com um **CPF de testes autorizado**.
-3. Configure `backendUrl` e `terminalKey` em `android/gradle.properties` localmente (nunca comite tokens) e gere o APK.
+3. Configure `ismBackendUrl` e `ismTerminalKey` em `android/gradle.properties` localmente (nunca comite tokens) e gere o APK.
 4. Instale somente em equipamento autorizado; configure o servidor com HTTPS válido.
 
 **Status:** implementação inicial; conexão real com IXC, disponibilidade de Pix e impressão dependem de parâmetros da instalação e de teste homologado. Não há APK compilado/homologado no repositório.
