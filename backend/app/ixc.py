@@ -129,6 +129,8 @@ class IXC:
             data = await self.request("get_pix", {"id_areceber": str(invoice["id"])})
             if isinstance(data, dict) and isinstance(data.get("registros"), list) and data["registros"]:
                 data = data["registros"][0]
+            if isinstance(data, dict) and isinstance(data.get("dados"), dict):
+                data = data["dados"]
             code = pick(data, ("pix_copia_cola", "pix_copia_e_cola", "copia_cola",
                                "pix", "pix_code", "qrcode_text", "qr_code", "emv"))
             # Nunca confundir identificador txid com um código Pix válido.
@@ -140,6 +142,17 @@ class IXC:
         if kind == "barra":
             code = pick(invoice, ("linha_digitavel", "linha_dig", "codigo_barras", "cod_barras"))
             code = digits(code)
+            if len(code) not in (44, 47, 48):
+                # Algumas carteiras só devolvem a linha no endpoint de boleto.
+                boleto = await self.request("get_boleto", {
+                    "id": str(invoice["id"]), "base64": "N", "juros": "N", "multa": "N"
+                })
+                if isinstance(boleto, list) and boleto:
+                    boleto = boleto[0]
+                if isinstance(boleto, dict) and isinstance(boleto.get("dados"), dict):
+                    boleto = boleto["dados"]
+                code = digits(pick(boleto, ("linha_digitavel", "linhaDigitavel",
+                                            "linha_dig", "codigo_barras", "barcode")))
             if len(code) not in (44, 47, 48):
                 raise IXCError("Linha digitável indisponível nesta cobrança")
             return {"codigo": code, "url": "", "pdf_base64": ""}
