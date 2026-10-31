@@ -97,12 +97,16 @@ public class MainActivity extends Activity {
 
         LinearLayout top = column();
         top.setPadding(dp(14), dp(14), dp(14), dp(16));
-        top.setBackground(background(NAVY, 18));
+        top.setBackground(background(Color.WHITE, 18));
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.ism_logo);
+        logo.setAdjustViewBounds(true);
+        top.addView(logo, new LinearLayout.LayoutParams(-1, dp(105)));
         content.addView(top, new LinearLayout.LayoutParams(-1, -2));
-        TextView brand = label("ISM Telecom", 27, Color.WHITE, true);
+        TextView brand = label("ISM Telecom", 23, NAVY, true);
         brand.setGravity(Gravity.CENTER);
         top.addView(brand);
-        TextView fiber = label("100% Fibra Óptica", 12, Color.rgb(115,227,229), false);
+        TextView fiber = label("100% Fibra Óptica", 12, TEAL, false);
         fiber.setGravity(Gravity.CENTER);
         top.addView(fiber);
         if (back) {
