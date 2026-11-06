@@ -1,5 +1,6 @@
 """Integração read-only com o IXC. Confirme o formato de respostas em sua carteira."""
 import base64
+import binascii
 import json
 import os
 import re
@@ -32,6 +33,32 @@ def valid_cpf(cpf):
     return True
 
 
+def valid_cnpj(value):
+    number = digits(value)
+    if len(number) != 14 or len(set(number)) == 1:
+        return False
+    for size, weights in (
+        (12, (5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2)),
+        (13, (6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2)),
+    ):
+        rest = sum(int(n) * w for n, w in zip(number[:size], weights)) % 11
+        expected = 0 if rest < 2 else 11 - rest
+        if int(number[size]) != expected:
+            return False
+    return True
+
+
+def valid_document(value):
+    return valid_cpf(value) or valid_cnpj(value)
+
+
+def format_document(value):
+    number = digits(value)
+    if len(number) == 14:
+        return f"{number[:2]}.{number[2:5]}.{number[5:8]}/{number[8:12]}-{number[12:]}"
+    return format_cpf(number)
+
+
 def pick(source, names):
     if not isinstance(source, dict):
         return ""
@@ -40,6 +67,52 @@ def pick(source, names):
         if isinstance(value, (str, int, float)) and str(value).strip():
             return str(value).strip()
     return ""
+
+
+def extract_pix_code(data):
+    """Seleciona apenas texto EMV do PIX; não usa txid nem a imagem QR."""
+    candidates = [data]
+    if isinstance(data, dict):
+        for key in ("dados", "pix", "qrCode", "qrcode"):
+            value = data.get(key)
+            if isinstance(value, dict):
+                candidates.append(value)
+                if key == "pix":
+                    qr = value.get("qrCode")
+                    if isinstance(qr, dict):
+                        candidates.append(qr)
+    fields = ("pix_copia_cola", "pix_copia_e_cola", "copia_cola",
+              "pix_code", "qrcode_text", "qr_code", "qrcode", "emv", "pix")
+    for obj in candidates:
+        code = pick(obj, fields)
+        if code.strip().upper().startswith("000201") and len(code) <= 1500:
+            return code.strip()
+    return ""
+
+
+def pdf_base64_from_response(content):
+    """Aceita somente PDF binário ou PDF Base64 puro, mesmo com MIME text/html."""
+    max_pdf_size = 8 * 1024 * 1024
+    if not content or len(content) > (max_pdf_size * 4 // 3 + 8192):
+        return ""
+    raw = content.strip()
+    if raw.startswith(b"%PDF-"):
+        pdf = raw
+    else:
+        prefix = b"data:application/pdf;base64,"
+        if raw.lower().startswith(prefix):
+            raw = raw[len(prefix):]
+        # O IXC pode devolver apenas Base64, com quebras de linha.
+        raw = b"".join(raw.split())
+        if not raw or len(raw) % 4:
+            return ""
+        try:
+            pdf = base64.b64decode(raw, validate=True)
+        except (binascii.Error, ValueError):
+            return ""
+    if not 5 <= len(pdf) <= max_pdf_size or not pdf.startswith(b"%PDF-"):
+        return ""
+    return base64.b64encode(pdf).decode("ascii")
 
 
 class IXC:
@@ -61,19 +134,31 @@ class IXC:
                 raise IXCError("Configure IXC_USER_ID e IXC_TOKEN")
             self.auth = "Basic " + base64.b64encode(f"{user}:{token}".encode()).decode()
 
-    async def request(self, path, body, raw=False):
+    async def request(self, path, body, raw=False, method="GET", include_ixcsoft=True):
         # Nunca aceitar URL/endpoint do cliente: evita SSRF.
         if path not in ("cliente", "fn_areceber", "get_pix", "get_boleto"):
             raise IXCError("Endpoint IXC não permitido")
+        if method not in ("GET", "POST"):
+            raise IXCError("Método IXC não permitido")
+        headers = {
+            "Authorization": self.auth,
+            "Content-Type": "application/json",
+            "Accept": "application/json, application/pdf",
+        }
+        if include_ixcsoft:
+            headers["ixcsoft"] = "listar"
         try:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=False, trust_env=False) as client:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=False, trust_env=False) as client:
                 response = await client.request(
-                    "GET", f"{self.root}/{path}", json=body,
-                    headers={"Authorization": self.auth, "ixcsoft": "listar", "Accept": "application/json, application/pdf"}
+                    method, f"{self.root}/{path}", json=body, headers=headers
                 )
             response.raise_for_status()
-            if raw and response.content.startswith(b"%PDF-"):
-                return {"pdf_base64": base64.b64encode(response.content).decode()}
+            if raw:
+                encoded = pdf_base64_from_response(response.content)
+                if encoded:
+                    return {"pdf_base64": encoded}
+                if not response.content:
+                    raise IXCError("IXC retornou boleto vazio")
             value = response.json()
             if not isinstance(value, (dict, list)):
                 raise IXCError("Retorno IXC inesperado")
@@ -98,7 +183,7 @@ class IXC:
 
     async def customer(self, cpf):
         # IXC normalmente armazena CPF pontuado. Tenta ambos sem usar busca parcial.
-        for query in (format_cpf(cpf), digits(cpf)):
+        for query in (format_document(cpf), digits(cpf)):
             found = await self.list_records("cliente", "cliente.cnpj_cpf", query, 5)
             for row in found:
                 if digits(row.get("cnpj_cpf")) == digits(cpf):
@@ -131,11 +216,7 @@ class IXC:
                 data = data["registros"][0]
             if isinstance(data, dict) and isinstance(data.get("dados"), dict):
                 data = data["dados"]
-            code = pick(data, ("pix_copia_cola", "pix_copia_e_cola", "copia_cola",
-                               "pix", "pix_code", "qrcode_text", "qr_code", "emv"))
-            # Nunca confundir identificador txid com um código Pix válido.
-            if not code.upper().startswith("000201"):
-                code = ""
+            code = extract_pix_code(data)
             if not code:
                 raise IXCError("Esta cobrança não disponibilizou Pix copia e cola no IXC")
             return {"codigo": code, "url": "", "pdf_base64": ""}
@@ -161,9 +242,17 @@ class IXC:
             # Somente links seguros; pode exigir login IXC no dispositivo.
             if link.startswith("https://"):
                 return {"codigo": "", "url": link, "pdf_base64": ""}
+            # Na instalação ISM, get_boleto responde Base64 puro em text/html.
+            # Endpoint de ação do IXC: POST sem o cabeçalho ixcsoft.
             data = await self.request("get_boleto", {
-                "id": str(invoice["id"]), "base64": "S", "juros": "N", "multa": "N"
-            }, raw=True)
+                "boletos": str(invoice["id"]),
+                "tipo_boleto": "arquivo",
+                "base64": "S",
+                "qjuro": "N",
+                "juro": "N",
+                "multa": "N",
+                "atualiza_boleto": "N",
+            }, raw=True, method="POST", include_ixcsoft=False)
             if isinstance(data, list) and data:
                 data = data[0]
             if not isinstance(data, dict):
@@ -175,7 +264,7 @@ class IXC:
             if encoded:
                 try:
                     pdf = base64.b64decode(encoded, validate=True)
-                except ValueError:
+                except (ValueError, binascii.Error):
                     pdf = b""
                 if not pdf.startswith(b"%PDF-") or len(pdf) > 8 * 1024 * 1024:
                     encoded = ""
