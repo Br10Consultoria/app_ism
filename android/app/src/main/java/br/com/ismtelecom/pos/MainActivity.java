@@ -679,7 +679,7 @@ public class MainActivity extends Activity {
     }
 
     private void showPixReceipt(JSONObject receipt) {
-        screenType = "payment";
+        screenType = "receipt";
         closePdf();
         initScreen("Pagamento confirmado", "A baixa via PIX foi confirmada no IXC.", true);
         TextView success = label("✓ PIX RECEBIDO", 20, GREEN, true);
@@ -717,7 +717,7 @@ public class MainActivity extends Activity {
                 dialog("Não foi possível preparar a confirmação de recebimento.");
             }
         });
-        primary("Voltar às faturas", v -> backToInvoicesOrHome());
+        primary("Nova consulta", v -> showLookup());
     }
 
     private void createReceiptPdf(JSONObject receipt) throws IOException {
