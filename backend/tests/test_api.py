@@ -71,10 +71,10 @@ def test_nested_ixc_pix_qrcode():
 def test_pdf_base64_response_without_html():
     import base64
     from app.ixc import pdf_base64_from_response
-    pdf = b"%PDF-1.4\\n%test fixture\\n%%EOF"
+    pdf = b"%PDF-1.4\n%test fixture\n%%EOF"
     encoded = base64.b64encode(pdf)
     assert pdf_base64_from_response(encoded) == encoded.decode("ascii")
-    assert pdf_base64_from_response(encoded + b"\\n") == encoded.decode("ascii")
+    assert pdf_base64_from_response(encoded + b"\n") == encoded.decode("ascii")
     assert pdf_base64_from_response(pdf) == encoded.decode("ascii")
     assert pdf_base64_from_response(b"data:application/pdf;base64," + encoded) == encoded.decode("ascii")
     assert pdf_base64_from_response(b"<html>JVBERi0=</html>") == ""
@@ -87,7 +87,7 @@ def test_boleto_post_and_mime_base64(monkeypatch):
     import httpx
     from app.ixc import IXC
 
-    pdf = b"%PDF-1.4\\n%test fixture\\n%%EOF"
+    pdf = b"%PDF-1.4\n%test fixture\n%%EOF"
     payload = base64.b64encode(pdf)
     monkeypatch.setenv("IXC_URL", "https://ixc.example.test")
     monkeypatch.setenv("IXC_USER_ID", "test")
