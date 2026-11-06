@@ -20,6 +20,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .ixc import IXC, IXCError, digits, valid_cpf, valid_document
+from .pix_confirmation import verify_pix_receipt
 
 app = FastAPI(title="ISM Telecom — API do Terminal", docs_url=None, redoc_url=None)
 rate_lock = Lock()
@@ -146,6 +147,27 @@ async def pagamento(invoice_id: int, kind: str, body: SessionRequest):
     except IXCError as err:
         # Erros sem PII nem token.
         raise HTTPException(422, str(err))
+
+
+@app.post("/api/v1/faturas/{invoice_id}/confirmar-pix",
+          dependencies=[Depends(require_terminal), Depends(throttle)])
+async def confirmar_pix(invoice_id: int, body: SessionRequest):
+    """Consulta read-only. Não efetua baixa, não cria comprovante bancário."""
+    if invoice_id < 1:
+        raise HTTPException(404, "Cobrança inválida")
+    customer_id = read_session(body.session)
+    try:
+        ixc = IXC()
+        invoice = await ixc.invoice(invoice_id)
+        if not invoice or str(invoice.get("id_cliente")) != customer_id:
+            raise HTTPException(404, "Cobrança não encontrada")
+        result = verify_pix_receipt(invoice)
+        if result["confirmado"]:
+            result["verificado_em"] = datetime.now(timezone.utc).isoformat()
+        return result
+    except IXCError:
+        # Não confundir falha de conexão com pagamento pendente ou confirmado.
+        raise HTTPException(502, "Não foi possível consultar a baixa no IXC")
 
 
 async def send_commercial(data):
