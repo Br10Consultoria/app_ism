@@ -60,3 +60,12 @@ Esta versão mostra PIX em QR, linha digitável, PDF por PdfRenderer, envio de P
 - Leads só serão confirmados após aceite do webhook/e-mail. Resposta 503 significa que não foi encaminhado; o técnico deve tentar novamente.
 - Proteger logs do reverse proxy, TLS, backups e acesso a variáveis do serviço.
 - Não habilitar transação financeira por cartão sem homologação PCI/SDK/adquirente.
+
+## Homologação Android v0.3 — ícone, navegação e chave local
+- Launcher usa ícone vetorial ISM Telecom, em vez do robô padrão Android.
+- Cabeçalho apresenta botões com texto **Voltar** e **Sair**. Sair confirma a ação, encerra a sessão e limpa o PDF temporário.
+- URL padrão de consultas: `https://app.ismtelecom.com.br`. Não há necessidade de compilar a chave no APK.
+- No Android, abra **Configurar terminal** e cole somente `TERMINAL_KEY` do backend. A chave fica cifrada pelo Android Keystore; nunca informe `IXC_TOKEN` no aplicativo.
+- O botão **Apagar chave salva** desvincula o terminal localmente. Após salvar, testar o CPF autorizado para confirmar autenticação. Guardar o terminal em ambiente supervisionado.
+- O fluxo GitHub Actions manual com `ISM_TERMINAL_KEY` permanece opcional, mas embutir o segredo no APK é menos seguro do que o pareamento local.
+- Limitação: a chave compartilhada de terminal ainda não identifica o cliente; para autoatendimento público, implementar autenticação forte, rate limit adequado e identificação individual de dispositivos.
