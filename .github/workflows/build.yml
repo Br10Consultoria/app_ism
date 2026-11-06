@@ -45,6 +45,8 @@ jobs:
             echo "Configure o segredo ISM_TERMINAL_KEY (minimo 32 caracteres) em Settings > Secrets and variables > Actions."
             exit 1
           fi
+      - name: Ativar AndroidX no CI (sem gravar segredos)
+        run: echo "android.useAndroidX=true" >> android/gradle.properties
       - run: gradle -p android :app:assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
