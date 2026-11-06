@@ -8,9 +8,9 @@ android {
         applicationId 'br.com.ismtelecom.pos'
         minSdk 26
         targetSdk 35
-        versionCode 2
-        versionName '0.2.0'
-        def url = (project.findProperty('ismBackendUrl') ?: '').toString()
+        versionCode 3
+        versionName '0.3.0'
+        def url = (project.findProperty('ismBackendUrl') ?: 'https://app.ismtelecom.com.br').toString()
         def key = (project.findProperty('ismTerminalKey') ?: '').toString()
         buildConfigField 'String', 'API_BASE', '"' + url.replace('\\', '\\\\').replace('"', '\\"') + '"'
         buildConfigField 'String', 'TERMINAL_KEY', '"' + key.replace('\\', '\\\\').replace('"', '\\"') + '"'
