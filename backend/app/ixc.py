@@ -33,6 +33,32 @@ def valid_cpf(cpf):
     return True
 
 
+def valid_cnpj(value):
+    number = digits(value)
+    if len(number) != 14 or len(set(number)) == 1:
+        return False
+    for size, weights in (
+        (12, (5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2)),
+        (13, (6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2)),
+    ):
+        rest = sum(int(n) * w for n, w in zip(number[:size], weights)) % 11
+        expected = 0 if rest < 2 else 11 - rest
+        if int(number[size]) != expected:
+            return False
+    return True
+
+
+def valid_document(value):
+    return valid_cpf(value) or valid_cnpj(value)
+
+
+def format_document(value):
+    number = digits(value)
+    if len(number) == 14:
+        return f"{number[:2]}.{number[2:5]}.{number[5:8]}/{number[8:12]}-{number[12:]}"
+    return format_cpf(number)
+
+
 def pick(source, names):
     if not isinstance(source, dict):
         return ""
@@ -157,7 +183,7 @@ class IXC:
 
     async def customer(self, cpf):
         # IXC normalmente armazena CPF pontuado. Tenta ambos sem usar busca parcial.
-        for query in (format_cpf(cpf), digits(cpf)):
+        for query in (format_document(cpf), digits(cpf)):
             found = await self.list_records("cliente", "cliente.cnpj_cpf", query, 5)
             for row in found:
                 if digits(row.get("cnpj_cpf")) == digits(cpf):
