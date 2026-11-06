@@ -42,6 +42,27 @@ def pick(source, names):
     return ""
 
 
+def extract_pix_code(data):
+    """Seleciona apenas texto EMV do PIX; não usa txid nem a imagem QR."""
+    candidates = [data]
+    if isinstance(data, dict):
+        for key in ("dados", "pix", "qrCode", "qrcode"):
+            value = data.get(key)
+            if isinstance(value, dict):
+                candidates.append(value)
+                if key == "pix":
+                    qr = value.get("qrCode")
+                    if isinstance(qr, dict):
+                        candidates.append(qr)
+    fields = ("pix_copia_cola", "pix_copia_e_cola", "copia_cola",
+              "pix_code", "qrcode_text", "qr_code", "qrcode", "emv", "pix")
+    for obj in candidates:
+        code = pick(obj, fields)
+        if code.strip().upper().startswith("000201") and len(code) <= 1500:
+            return code.strip()
+    return ""
+
+
 class IXC:
     def __init__(self):
         raw_url = os.getenv("IXC_URL", "").rstrip("/")
@@ -131,11 +152,7 @@ class IXC:
                 data = data["registros"][0]
             if isinstance(data, dict) and isinstance(data.get("dados"), dict):
                 data = data["dados"]
-            code = pick(data, ("pix_copia_cola", "pix_copia_e_cola", "copia_cola",
-                               "pix", "pix_code", "qrcode_text", "qr_code", "emv"))
-            # Nunca confundir identificador txid com um código Pix válido.
-            if not code.upper().startswith("000201"):
-                code = ""
+            code = extract_pix_code(data)
             if not code:
                 raise IXCError("Esta cobrança não disponibilizou Pix copia e cola no IXC")
             return {"codigo": code, "url": "", "pdf_base64": ""}
