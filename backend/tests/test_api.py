@@ -67,3 +67,56 @@ def test_nested_ixc_pix_qrcode():
     assert extract_pix_code({"pix": {"qrCode": {"imagemQrcode": "base64image", "qrcode": "txid-123"}}}) == ""
     assert extract_pix_code({"pix_copia_cola": emv}) == emv
 
+
+def test_pdf_base64_response_without_html():
+    import base64
+    from app.ixc import pdf_base64_from_response
+    pdf = b"%PDF-1.4\\n%test fixture\\n%%EOF"
+    encoded = base64.b64encode(pdf)
+    assert pdf_base64_from_response(encoded) == encoded.decode("ascii")
+    assert pdf_base64_from_response(encoded + b"\\n") == encoded.decode("ascii")
+    assert pdf_base64_from_response(pdf) == encoded.decode("ascii")
+    assert pdf_base64_from_response(b"data:application/pdf;base64," + encoded) == encoded.decode("ascii")
+    assert pdf_base64_from_response(b"<html>JVBERi0=</html>") == ""
+    assert pdf_base64_from_response(base64.b64encode(b"not a pdf")) == ""
+
+
+def test_boleto_post_and_mime_base64(monkeypatch):
+    import asyncio
+    import base64
+    import httpx
+    from app.ixc import IXC
+
+    pdf = b"%PDF-1.4\\n%test fixture\\n%%EOF"
+    payload = base64.b64encode(pdf)
+    monkeypatch.setenv("IXC_URL", "https://ixc.example.test")
+    monkeypatch.setenv("IXC_USER_ID", "test")
+    monkeypatch.setenv("IXC_TOKEN", "test")
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            pass
+
+        async def request(self, method, url, json, headers):
+            assert method == "POST"
+            assert url.endswith("/webservice/v1/get_boleto")
+            assert "ixcsoft" not in headers
+            assert json["boletos"] == "123"
+            assert json["tipo_boleto"] == "arquivo"
+            assert json["base64"] == "S"
+            return httpx.Response(
+                200, request=httpx.Request(method, url),
+                headers={"Content-Type": "text/html; charset=ISO-8859-1"},
+                content=payload
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    result = asyncio.run(IXC().payment({"id": "123"}, "boleto"))
+    assert result["pdf_base64"] == payload.decode("ascii")
+    assert result["url"] == ""
