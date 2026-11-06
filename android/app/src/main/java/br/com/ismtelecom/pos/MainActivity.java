@@ -789,7 +789,7 @@ public class MainActivity extends Activity {
             Intent send = new Intent(Intent.ACTION_SEND);
             send.setType("application/pdf");
             send.putExtra(Intent.EXTRA_STREAM, uri);
-            send.setExtra(Intent.EXTRA_TEXT,
+            send.putExtra(Intent.EXTRA_TEXT,
                     "ISM Telecom: PIX confirmado no IXC para a fatura " +
                     receipt.optString("id") + ". Valor recebido: " +
                     money(receipt.optString("valor_recebido")) + ".");
