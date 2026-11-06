@@ -19,7 +19,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .ixc import IXC, IXCError, digits, valid_cpf
+from .ixc import IXC, IXCError, digits, valid_cpf, valid_document
 
 app = FastAPI(title="ISM Telecom — API do Terminal", docs_url=None, redoc_url=None)
 rate_lock = Lock()
@@ -38,6 +38,7 @@ class Lead(BaseModel):
     cpf: str = Field(min_length=11, max_length=18)
     telefone: str = Field(min_length=10, max_length=22)
     nome: str = Field(default="", max_length=100)
+    id_cliente: str = Field(default="", max_length=40)
     tecnico: str = Field(min_length=2, max_length=80)
     consentimento: bool
 
@@ -108,8 +109,8 @@ async def health():
 
 @app.post("/api/v1/faturas", dependencies=[Depends(require_terminal), Depends(throttle)])
 async def faturas(body: Lookup):
-    if not valid_cpf(body.cpf):
-        raise HTTPException(422, "CPF inválido")
+    if not valid_document(body.cpf):
+        raise HTTPException(422, "CPF ou CNPJ inválido")
     try:
         ixc = IXC()
         client = await ixc.customer(body.cpf)
@@ -172,6 +173,7 @@ async def send_commercial(data):
             f"Nome: {data['nome']}\n"
             f"CPF: {data['cpf']}\n"
             f"Telefone: {data['telefone']}\n"
+            f"ID Cliente: {data['id_cliente']}\n"
             f"Tecnico: {data['tecnico']}\n"
             "Consentimento para contato: sim\n"
         )
@@ -197,6 +199,7 @@ async def interessados(body: Lead):
         "cpf": digits(body.cpf),
         "telefone": phone,
         "nome": body.nome.strip(),
+        "id_cliente": body.id_cliente.strip(),
         "tecnico": body.tecnico.strip(),
         "origem": "App Gertec ISM",
         "consentimento": True,
