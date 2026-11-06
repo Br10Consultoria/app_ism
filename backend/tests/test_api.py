@@ -120,3 +120,20 @@ def test_boleto_post_and_mime_base64(monkeypatch):
     result = asyncio.run(IXC().payment({"id": "123"}, "boleto"))
     assert result["pdf_base64"] == payload.decode("ascii")
     assert result["url"] == ""
+
+
+def test_cnpj_document():
+    from app.ixc import valid_cnpj, valid_document, format_document
+    cnpj = "11.222.333/0001-81"
+    assert valid_cnpj(cnpj)
+    assert valid_document(cnpj)
+    assert format_document(cnpj) == cnpj
+    assert not valid_cnpj("11.222.333/0001-82")
+    assert valid_document("52998224725")
+
+
+def test_lead_optional_customer_id():
+    from app.main import Lead
+    obj = Lead(cpf="52998224725", telefone="71999998888", nome="Teste",
+               id_cliente="123", tecnico="Tecnico", consentimento=True)
+    assert obj.id_cliente == "123"
