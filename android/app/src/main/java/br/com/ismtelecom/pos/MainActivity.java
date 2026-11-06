@@ -81,6 +81,7 @@ public class MainActivity extends Activity {
     private TextView sessionFooter;
     private String session = "";
     private JSONObject invoiceResponse;
+    private String screenType = "home";
     private int filterMode = 0; // 0 = todas, 1 = em aberto, 2 = vencidas.
     private long deadline = 0;
     private int requestEpoch = 0;
@@ -225,7 +226,7 @@ public class MainActivity extends Activity {
     }
 
     private void backToInvoicesOrHome() {
-        if (invoiceResponse != null && isSessionValid()) renderInvoices();
+        if ("payment".equals(screenType) && invoiceResponse != null && isSessionValid()) renderInvoices();
         else showHome();
     }
 
@@ -284,6 +285,7 @@ public class MainActivity extends Activity {
     }
 
     private void showHome() {
+        screenType = "home";
         resetSession();
         closePdf();
         initScreen("", "", false);
@@ -305,6 +307,7 @@ public class MainActivity extends Activity {
     }
 
     private void showLookup() {
+        screenType = "lookup";
         resetSession();
         closePdf();
         initScreen("Boletos e\npagamentos", "Insira seu CPF ou CNPJ para consultar as faturas.", true);
@@ -327,6 +330,7 @@ public class MainActivity extends Activity {
     }
 
     private void renderInvoices() {
+        screenType = "invoices";
         closePdf();
         if (invoiceResponse == null) { showHome(); return; }
         JSONArray invoices = invoiceResponse.optJSONArray("faturas");
@@ -444,6 +448,7 @@ public class MainActivity extends Activity {
     }
 
     private void showPayment(JSONObject result) {
+        screenType = "payment";
         closePdf();
         String kind = result.optString("tipo");
         initScreen("Dados para pagamento",
@@ -515,7 +520,9 @@ public class MainActivity extends Activity {
                 || pdf[0] != '%' || pdf[1] != 'P' || pdf[2] != 'D'
                 || pdf[3] != 'F' || pdf[4] != '-') throw new IOException("PDF inválido");
         closePdf();
-        tempPdf = new File(getCacheDir(), "boleto_temporario.pdf");
+        File directory = new File(getCacheDir(), "boletos");
+        if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Cache indisponível");
+        tempPdf = new File(directory, "boleto_temporario.pdf");
         try (FileOutputStream out = new FileOutputStream(tempPdf)) { out.write(pdf); }
     }
 
@@ -611,6 +618,7 @@ public class MainActivity extends Activity {
     }
 
     private void showLead() {
+        screenType = "lead";
         resetSession();
         closePdf();
         initScreen("Quero contratar", "Preencha os dados para nossa equipe comercial entrar em contato.", true);
