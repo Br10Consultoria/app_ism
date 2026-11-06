@@ -137,3 +137,75 @@ def test_lead_optional_customer_id():
     obj = Lead(cpf="52998224725", telefone="71999998888", nome="Teste",
                id_cliente="123", tecnico="Tecnico", consentimento=True)
     assert obj.id_cliente == "123"
+
+
+def test_pix_confirmation_strict_state_checks():
+    from app.pix_confirmation import verify_pix_receipt
+    invoice = {
+        "id": "17", "id_cliente": "8", "status": "R",
+        "recebido_via_pix": "S", "aguardando_confirmacao_pagamento": "N",
+        "estornado": "N", "valor_recebido": "89.90",
+        "valor_aberto": "0.00", "pagamento_data": "2026-11-06",
+        "documento": "BOL-17", "pix_txid": "tx-17"
+    }
+    result = verify_pix_receipt(invoice)
+    assert result["confirmado"] is True
+    assert result["situacao"] == "confirmado"
+    assert result["valor_recebido"] == "89.90"
+    assert "id_cliente" not in result
+
+    cases = [
+        ({"status": "A"}, "aguardando"),
+        ({"status": "R", "recebido_via_pix": "N"}, "outro_meio"),
+        ({"status": "R", "recebido_via_pix": ""}, "indeterminado"),
+        ({"aguardando_confirmacao_pagamento": "S"}, "aguardando"),
+        ({"estornado": "S"}, "estornado"),
+        ({"valor_aberto": "12.30"}, "parcial"),
+        ({"valor_recebido": ""}, "indeterminado"),
+        ({"status": "C"}, "cancelado"),
+    ]
+    for update, state in cases:
+        test = {**invoice, **update}
+        response = verify_pix_receipt(test)
+        assert response["confirmado"] is False
+        assert response["situacao"] == state
+
+
+def test_pix_confirmation_endpoint_scope_and_auth(monkeypatch):
+    from app import main as module
+
+    class FakeIXC:
+        async def invoice(self, ident):
+            return {"id": str(ident), "id_cliente": "123",
+                    "status": "R", "liberado": "S", "recebido_via_pix": "S",
+                    "valor_recebido": "89.90", "valor_aberto": "0",
+                    "estornado": "N", "aguardando_confirmacao_pagamento": "N"}
+
+    monkeypatch.setattr(module, "IXC", FakeIXC)
+    url = "/api/v1/faturas/99/confirmar-pix"
+    good = {"session": create_session("123")}
+    forbidden = {"session": create_session("999")}
+    assert client.post(url, json=good).status_code == 401
+    assert client.post(url, json=forbidden, headers=headers).status_code == 404
+    ok = client.post(url, json=good, headers=headers)
+    assert ok.status_code == 200
+    assert ok.json()["confirmado"] is True
+    assert ok.json()["id"] == "99"
+    assert ok.json()["origem"] == "IXC"
+    assert "verificado_em" in ok.json()
+    assert "cpf" not in ok.json()
+
+
+def test_pix_confirmation_unknown_not_claimed_paid(monkeypatch):
+    from app import main as module
+
+    class FakeIXC:
+        async def invoice(self, ident):
+            return {"id": str(ident), "id_cliente": "123",
+                    "status": "A", "recebido_via_pix": "N"}
+
+    monkeypatch.setattr(module, "IXC", FakeIXC)
+    r = client.post("/api/v1/faturas/17/confirmar-pix",
+                    headers=headers, json={"session": create_session("123")})
+    assert r.status_code == 200
+    assert r.json() == {"situacao": "aguardando", "confirmado": False}
