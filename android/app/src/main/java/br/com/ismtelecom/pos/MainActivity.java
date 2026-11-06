@@ -242,20 +242,22 @@ public class MainActivity extends Activity {
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         if (back) {
-            TextView arrow = label("‹", 32, CYAN, false);
-            arrow.setGravity(Gravity.CENTER);
-            arrow.setOnClickListener(v -> backToInvoicesOrHome());
-            header.addView(arrow, new LinearLayout.LayoutParams(dp(44), dp(58)));
+            TextView goBack = label("← Voltar", 13, NAVY, true);
+            goBack.setGravity(Gravity.CENTER);
+            goBack.setContentDescription("Voltar para a tela anterior");
+            goBack.setOnClickListener(v -> backToInvoicesOrHome());
+            header.addView(goBack, new LinearLayout.LayoutParams(dp(77), dp(58)));
+        } else {
+            header.addView(new View(this), new LinearLayout.LayoutParams(dp(77), dp(58)));
         }
         View brand = logo(back ? 58 : 102);
         LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(0, dp(back ? 58 : 102), 1);
         header.addView(brand, logoParams);
-        if (back) {
-            TextView close = label("×", 30, NAVY, false);
-            close.setGravity(Gravity.CENTER);
-            close.setOnClickListener(v -> showHome());
-            header.addView(close, new LinearLayout.LayoutParams(dp(44), dp(58)));
-        }
+        TextView exit = label("Sair ×", 13, NAVY, true);
+        exit.setGravity(Gravity.CENTER);
+        exit.setContentDescription("Sair do aplicativo ISM Telecom");
+        exit.setOnClickListener(v -> confirmExit());
+        header.addView(exit, new LinearLayout.LayoutParams(dp(77), dp(58)));
         content.addView(header, margins(-1, -2, back ? 10 : 34));
 
         if (!title.isEmpty()) {
@@ -281,8 +283,89 @@ public class MainActivity extends Activity {
     }
 
     private void backToInvoicesOrHome() {
-        if ("payment".equals(screenType) && invoiceResponse != null && isSessionValid()) renderInvoices();
-        else showHome();
+        switch (screenType) {
+            case "payment":
+                if (invoiceResponse != null && isSessionValid()) renderInvoices();
+                else showHome();
+                break;
+            case "invoices":
+                showLookup();
+                break;
+            case "home":
+                confirmExit();
+                break;
+            default:
+                showHome();
+                break;
+        }
+    }
+
+    private void confirmExit() {
+        new AlertDialog.Builder(this)
+                .setTitle("Sair do ISM Telecom?")
+                .setMessage("A consulta atual será encerrada. Deseja fechar o aplicativo?")
+                .setNegativeButton("Cancelar", (d, w) -> {})
+                .setPositiveButton("Sair", (d, w) -> {
+                    resetSession();
+                    closePdf();
+                    finishAffinity();
+                })
+                .show();
+    }
+
+    private String terminalKey() {
+        String compiled = BuildConfig.TERMINAL_KEY;
+        return compiled != null && compiled.length() >= 32
+                ? compiled : TerminalKeyStore.read(this);
+    }
+
+    private String apiBase() {
+        return BuildConfig.API_BASE.startsWith("https://")
+                ? BuildConfig.API_BASE : "https://app.ismtelecom.com.br";
+    }
+
+    /** Pareamento de homologação: chave local, não é credencial do IXC. */
+    private void showTerminalSetup() {
+        resetSession();
+        closePdf();
+        screenType = "setup";
+        initScreen("Configurar terminal",
+                "Aponte a maquininha para a API ISM. Informe a chave TERMINAL_KEY do servidor, nunca o token do IXC.", true);
+        content.addView(label("Servidor: " + apiBase(), 13, NAVY, true),
+                margins(-1, -2, 18));
+        EditText credential = field("Chave do terminal", 
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        credential.setSelectAllOnFocus(true);
+        content.addView(label("A chave deve ter no mínimo 32 caracteres. "
+                        + "Ela ficará cifrada no armazenamento privado do Android.",
+                12, MUTED, false), margins(-1, -2, 14));
+
+        primary("Salvar configuração", v -> {
+            String key = credential.getText().toString().trim();
+            if (key.length() < 32 || key.length() > 512) {
+                dialog("A chave deve ter entre 32 e 512 caracteres."); return;
+            }
+            try {
+                TerminalKeyStore.save(this, key);
+                credential.setText("");
+                showHome();
+                dialog("Terminal configurado. Faça uma consulta para validar a autenticação.");
+            } catch (Exception ex) {
+                dialog("Não foi possível salvar a configuração neste Android.");
+            }
+        });
+
+        Button forget = button("Apagar chave salva", RED, false);
+        forget.setOnClickListener(v -> new AlertDialog.Builder(this)
+                .setTitle("Desvincular terminal?")
+                .setMessage("A maquininha precisará de uma chave válida para novas consultas.")
+                .setNegativeButton("Cancelar", (d, w) -> {})
+                .setPositiveButton("Desvincular", (d, w) -> {
+                    TerminalKeyStore.clear(this);
+                    showHome();
+                    dialog("Chave local apagada.");
+                }).show());
+        content.addView(forget, margins(-1, dp(48), 12));
     }
 
     private EditText field(String hint, int inputType) {
@@ -359,6 +442,17 @@ public class MainActivity extends Activity {
         TextView warning = label("Serviço de consulta. Confirme os dados antes de pagar no seu banco.", 12, MUTED, false);
         warning.setGravity(Gravity.CENTER);
         content.addView(warning, margins(-1, -2, 20));
+
+        Button config = button("Configurar terminal", NAVY, false);
+        config.setTextSize(13);
+        config.setOnClickListener(v -> showTerminalSetup());
+        content.addView(config, margins(-1, dp(46), 10));
+
+        TextView status = label(
+                terminalKey().length() >= 32 ? "Chave de terminal salva" : "Terminal não configurado",
+                11, MUTED, false);
+        status.setGravity(Gravity.CENTER);
+        content.addView(status, margins(-1, -2, 8));
     }
 
     private void showLookup() {
@@ -710,6 +804,7 @@ public class MainActivity extends Activity {
             } catch (JSONException ignored) {}
             hideKeyboard(tech);
             call("/api/v1/interessados", data, response -> {
+                screenType = "lead-confirmation";
                 initScreen("Solicitação enviada", "O contato foi encaminhado ao comercial.", true);
                 content.addView(label("Protocolo: " + response.optString("protocolo"), 16, NAVY, true));
             });
@@ -726,8 +821,12 @@ public class MainActivity extends Activity {
 
     private void call(String path, JSONObject data, Success onSuccess) {
         if (loading) return;
-        if (!BuildConfig.API_BASE.startsWith("https://") || BuildConfig.TERMINAL_KEY.length() < 32) {
-            dialog("Configure o domínio HTTPS e a chave do terminal no APK."); return;
+        final String secretKey = terminalKey();
+        final String baseUrl = apiBase();
+        if (!baseUrl.startsWith("https://") || secretKey.length() < 32) {
+            showTerminalSetup();
+            dialog("Configure a chave do terminal para consultar o IXC.");
+            return;
         }
         final int epoch = requestEpoch;
         loading = true;
@@ -736,13 +835,13 @@ public class MainActivity extends Activity {
         executor.execute(() -> {
             HttpURLConnection conn = null;
             try {
-                conn = (HttpURLConnection) new URL(BuildConfig.API_BASE.replaceAll("/+$", "") + path).openConnection();
+                conn = (HttpURLConnection) new URL(baseUrl.replaceAll("/+$", "") + path).openConnection();
                 conn.setRequestMethod("POST");
                 conn.setConnectTimeout(10_000);
                 conn.setReadTimeout(30_000);
                 conn.setDoOutput(true);
                 conn.setRequestProperty("Content-Type", "application/json");
-                conn.setRequestProperty("X-Terminal-Key", BuildConfig.TERMINAL_KEY);
+                conn.setRequestProperty("X-Terminal-Key", secretKey);
                 try (OutputStream out = conn.getOutputStream()) {
                     out.write(data.toString().getBytes(StandardCharsets.UTF_8));
                 }
