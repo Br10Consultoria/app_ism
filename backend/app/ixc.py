@@ -1,5 +1,6 @@
 """Integração read-only com o IXC. Confirme o formato de respostas em sua carteira."""
 import base64
+import binascii
 import json
 import os
 import re
@@ -63,6 +64,31 @@ def extract_pix_code(data):
     return ""
 
 
+def pdf_base64_from_response(content):
+    """Aceita somente PDF binário ou PDF Base64 puro, mesmo com MIME text/html."""
+    max_pdf_size = 8 * 1024 * 1024
+    if not content or len(content) > (max_pdf_size * 4 // 3 + 8192):
+        return ""
+    raw = content.strip()
+    if raw.startswith(b"%PDF-"):
+        pdf = raw
+    else:
+        prefix = b"data:application/pdf;base64,"
+        if raw.lower().startswith(prefix):
+            raw = raw[len(prefix):]
+        # O IXC pode devolver apenas Base64, com quebras de linha.
+        raw = b"".join(raw.split())
+        if not raw or len(raw) % 4:
+            return ""
+        try:
+            pdf = base64.b64decode(raw, validate=True)
+        except (binascii.Error, ValueError):
+            return ""
+    if not 5 <= len(pdf) <= max_pdf_size or not pdf.startswith(b"%PDF-"):
+        return ""
+    return base64.b64encode(pdf).decode("ascii")
+
+
 class IXC:
     def __init__(self):
         raw_url = os.getenv("IXC_URL", "").rstrip("/")
@@ -82,19 +108,31 @@ class IXC:
                 raise IXCError("Configure IXC_USER_ID e IXC_TOKEN")
             self.auth = "Basic " + base64.b64encode(f"{user}:{token}".encode()).decode()
 
-    async def request(self, path, body, raw=False):
+    async def request(self, path, body, raw=False, method="GET", include_ixcsoft=True):
         # Nunca aceitar URL/endpoint do cliente: evita SSRF.
         if path not in ("cliente", "fn_areceber", "get_pix", "get_boleto"):
             raise IXCError("Endpoint IXC não permitido")
+        if method not in ("GET", "POST"):
+            raise IXCError("Método IXC não permitido")
+        headers = {
+            "Authorization": self.auth,
+            "Content-Type": "application/json",
+            "Accept": "application/json, application/pdf",
+        }
+        if include_ixcsoft:
+            headers["ixcsoft"] = "listar"
         try:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=False, trust_env=False) as client:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=False, trust_env=False) as client:
                 response = await client.request(
-                    "GET", f"{self.root}/{path}", json=body,
-                    headers={"Authorization": self.auth, "ixcsoft": "listar", "Accept": "application/json, application/pdf"}
+                    method, f"{self.root}/{path}", json=body, headers=headers
                 )
             response.raise_for_status()
-            if raw and response.content.startswith(b"%PDF-"):
-                return {"pdf_base64": base64.b64encode(response.content).decode()}
+            if raw:
+                encoded = pdf_base64_from_response(response.content)
+                if encoded:
+                    return {"pdf_base64": encoded}
+                if not response.content:
+                    raise IXCError("IXC retornou boleto vazio")
             value = response.json()
             if not isinstance(value, (dict, list)):
                 raise IXCError("Retorno IXC inesperado")
@@ -178,9 +216,17 @@ class IXC:
             # Somente links seguros; pode exigir login IXC no dispositivo.
             if link.startswith("https://"):
                 return {"codigo": "", "url": link, "pdf_base64": ""}
+            # Na instalação ISM, get_boleto responde Base64 puro em text/html.
+            # Endpoint de ação do IXC: POST sem o cabeçalho ixcsoft.
             data = await self.request("get_boleto", {
-                "id": str(invoice["id"]), "base64": "S", "juros": "N", "multa": "N"
-            }, raw=True)
+                "boletos": str(invoice["id"]),
+                "tipo_boleto": "arquivo",
+                "base64": "S",
+                "qjuro": "N",
+                "juro": "N",
+                "multa": "N",
+                "atualiza_boleto": "N",
+            }, raw=True, method="POST", include_ixcsoft=False)
             if isinstance(data, list) and data:
                 data = data[0]
             if not isinstance(data, dict):
@@ -192,7 +238,7 @@ class IXC:
             if encoded:
                 try:
                     pdf = base64.b64decode(encoded, validate=True)
-                except ValueError:
+                except (ValueError, binascii.Error):
                     pdf = b""
                 if not pdf.startswith(b"%PDF-") or len(pdf) > 8 * 1024 * 1024:
                     encoded = ""
