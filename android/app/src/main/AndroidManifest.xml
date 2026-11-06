@@ -5,6 +5,8 @@
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
         android:label="ISM Telecom"
+        android:icon="@drawable/ism_launcher_icon"
+        android:roundIcon="@drawable/ism_launcher_icon"
         android:theme="@style/ISMTheme"
         android:supportsRtl="true">
         <activity
