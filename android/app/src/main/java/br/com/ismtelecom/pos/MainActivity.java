@@ -8,7 +8,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.pdf.PdfDocument;
 import android.graphics.Paint;
+import android.content.ActivityNotFoundException;
 import android.graphics.RectF;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -607,6 +609,11 @@ public class MainActivity extends Activity {
             content.addView(label("PIX copia e cola", 18, NAVY, true), margins(-1, -2, 12));
             displayQr(code);
             displayCode(code);
+            TextView help = label("Após o cliente pagar no banco, toque para consultar a baixa no IXC. " +
+                    "A exibição do QR Code não confirma o recebimento.", 12, MUTED, false);
+            content.addView(help, margins(-1, -2, 12));
+            String invoiceId = result.optString("id");
+            primary("Verificar pagamento PIX", v -> checkPixPayment(invoiceId));
         } else if ("barra".equals(kind)) {
             content.addView(label("Linha digitável", 18, NAVY, true), margins(-1, -2, 12));
             displayCode(code);
@@ -632,6 +639,180 @@ public class MainActivity extends Activity {
                 "Confira beneficiário, valor e vencimento no aplicativo do seu banco antes de pagar.",
                 12, MUTED, false);
         content.addView(reminder, margins(-1, -2, 15));
+    }
+
+    private void checkPixPayment(String invoiceId) {
+        if (!isSessionValid()) {
+            showHome();
+            dialog("Sessão expirada. Consulte o cliente novamente.");
+            return;
+        }
+        if (!invoiceId.matches("[0-9]+")) {
+            dialog("Cobrança inválida para confirmação.");
+            return;
+        }
+        JSONObject request = new JSONObject();
+        try { request.put("session", session); } catch (JSONException ignored) {}
+        call("/api/v1/faturas/" + invoiceId + "/confirmar-pix", request, result -> {
+            if (result.optBoolean("confirmado", false)
+                    && "confirmado".equals(result.optString("situacao"))) {
+                showPixReceipt(result);
+                return;
+            }
+            String state = result.optString("situacao");
+            String detail;
+            switch (state) {
+                case "aguardando": detail = "O PIX ainda não foi confirmado no IXC. " +
+                        "A atualização pode demorar conforme o banco. Verifique novamente."; break;
+                case "outro_meio": detail = "A cobrança consta recebida, mas não foi " +
+                        "identificada como PIX. Não será emitida confirmação PIX."; break;
+                case "parcial": detail = "A cobrança possui saldo em aberto. " +
+                        "Não é possível emitir confirmação de quitação."; break;
+                case "estornado": detail = "O pagamento consta estornado. " +
+                        "Não será gerado comprovante."; break;
+                case "cancelado": detail = "A cobrança está cancelada no IXC."; break;
+                default: detail = "Não foi possível comprovar o recebimento via PIX " +
+                        "com os dados atuais do IXC. Consulte o financeiro."; break;
+            }
+            dialog(detail);
+        });
+    }
+
+    private void showPixReceipt(JSONObject receipt) {
+        screenType = "receipt";
+        closePdf();
+        initScreen("Pagamento confirmado", "A baixa via PIX foi confirmada no IXC.", true);
+        TextView success = label("✓ PIX RECEBIDO", 20, GREEN, true);
+        success.setGravity(Gravity.CENTER);
+        success.setPadding(dp(10), dp(20), dp(10), dp(20));
+        success.setBackground(shape(Color.WHITE, 14, 0));
+        content.addView(success, margins(-1, -2, 14));
+
+        String amount = receipt.optString("valor_recebido");
+        String paymentDate = receipt.optString("data_pagamento");
+        String invoiceId = receipt.optString("id");
+        content.addView(label("Recebido: " + money(amount), 17, NAVY, true),
+                margins(-1, -2, 9));
+        content.addView(label("Fatura IXC nº " + invoiceId, 14, NAVY, false),
+                margins(-1, -2, 9));
+        if (!paymentDate.isEmpty()) {
+            content.addView(label("Pagamento: " + paymentDate, 14, NAVY, false),
+                    margins(-1, -2, 9));
+        }
+        TextView note = label(
+                "Confirmação informativa baseada no registro do IXC. " +
+                "Não substitui o comprovante bancário do pagador.", 12, MUTED, false);
+        content.addView(note, margins(-1, -2, 16));
+
+        primary("Enviar confirmação pelo WhatsApp", v -> {
+            if (!isSessionValid()) {
+                showHome();
+                dialog("Sessão expirada. Consulte novamente para emitir confirmação.");
+                return;
+            }
+            try {
+                createReceiptPdf(receipt);
+                sharePixConfirmation(receipt);
+            } catch (Exception ex) {
+                dialog("Não foi possível preparar a confirmação de recebimento.");
+            }
+        });
+        primary("Nova consulta", v -> showLookup());
+    }
+
+    private void createReceiptPdf(JSONObject receipt) throws IOException {
+        if (!receipt.optBoolean("confirmado") ||
+                !"confirmado".equals(receipt.optString("situacao"))) {
+            throw new IOException("Pagamento não confirmado");
+        }
+        closePdf();
+        File directory = new File(getCacheDir(), "boletos");
+        if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Sem cache");
+        tempPdf = new File(directory, "confirmacao_pix.pdf");
+
+        PdfDocument document = new PdfDocument();
+        try {
+            PdfDocument.PageInfo pageInfo =
+                    new PdfDocument.PageInfo.Builder(595, 842, 1).create();
+            PdfDocument.Page page = document.startPage(pageInfo);
+            Canvas canvas = page.getCanvas();
+            canvas.drawColor(Color.WHITE);
+            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            paint.setColor(NAVY);
+            paint.setTypeface(Typeface.create("sans-serif", Typeface.BOLD));
+            paint.setTextSize(26);
+            canvas.drawText("ISM Telecom", 42, 74, paint);
+            paint.setTextSize(17);
+            canvas.drawText("Confirmação de recebimento - PIX", 42, 120, paint);
+
+            paint.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+            paint.setTextSize(14);
+            canvas.drawText("Status: CONFIRMADO NO IXC", 42, 166, paint);
+            canvas.drawText("Fatura IXC: " + receipt.optString("id"), 42, 197, paint);
+            canvas.drawText("Documento: " + receipt.optString("documento"), 42, 228, paint);
+            canvas.drawText("Valor recebido: " +
+                    money(receipt.optString("valor_recebido")), 42, 259, paint);
+            String date = receipt.optString("data_pagamento");
+            canvas.drawText("Data de pagamento: " +
+                    (date.isEmpty() ? "Não informada pelo IXC" : date), 42, 290, paint);
+            canvas.drawText("Verificado em: " +
+                    receipt.optString("verificado_em"), 42, 321, paint);
+            String txid = receipt.optString("pix_txid");
+            if (!txid.isEmpty()) {
+                paint.setTextSize(10);
+                // Identificadores muito longos não devem exceder os limites da página.
+                if (txid.length() > 66) txid = txid.substring(0, 66) + "...";
+                canvas.drawText("TxID: " + txid, 42, 352, paint);
+            }
+            paint.setTextSize(13);
+            paint.setColor(MUTED);
+            canvas.drawText("Documento informativo emitido a partir da baixa", 42, 432, paint);
+            canvas.drawText("registrada no IXC. Não substitui o comprovante", 42, 451, paint);
+            canvas.drawText("original fornecido pelo banco do pagador.", 42, 470, paint);
+            document.finishPage(page);
+            try (FileOutputStream out = new FileOutputStream(tempPdf)) {
+                document.writeTo(out);
+            }
+        } finally {
+            document.close();
+        }
+    }
+
+    private void sharePixConfirmation(JSONObject receipt) {
+        if (tempPdf == null || !tempPdf.exists()) {
+            dialog("Arquivo de confirmação indisponível.");
+            return;
+        }
+        try {
+            Uri uri = FileProvider.getUriForFile(
+                    this, BuildConfig.APPLICATION_ID + ".fileprovider", tempPdf);
+            Intent send = new Intent(Intent.ACTION_SEND);
+            send.setType("application/pdf");
+            send.putExtra(Intent.EXTRA_STREAM, uri);
+            send.putExtra(Intent.EXTRA_TEXT,
+                    "ISM Telecom: PIX confirmado no IXC para a fatura " +
+                    receipt.optString("id") + ". Valor recebido: " +
+                    money(receipt.optString("valor_recebido")) + ".");
+            send.setClipData(ClipData.newUri(getContentResolver(), "Confirmação PIX", uri));
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            // O técnico escolhe o contato. Não enviamos automaticamente a terceiros.
+            Intent whatsapp = new Intent(send);
+            whatsapp.setPackage("com.whatsapp");
+            try {
+                startActivity(whatsapp);
+            } catch (ActivityNotFoundException normalNotInstalled) {
+                Intent business = new Intent(send);
+                business.setPackage("com.whatsapp.w4b");
+                try {
+                    startActivity(business);
+                } catch (ActivityNotFoundException businessNotInstalled) {
+                    startActivity(Intent.createChooser(send,
+                            "WhatsApp ou outro aplicativo para enviar a confirmação"));
+                }
+            }
+        } catch (Exception ex) {
+            dialog("Não há aplicativo disponível para compartilhar a confirmação.");
+        }
     }
 
     private void displayQr(String code) {

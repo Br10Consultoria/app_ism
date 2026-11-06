@@ -69,3 +69,19 @@ Esta versão mostra PIX em QR, linha digitável, PDF por PdfRenderer, envio de P
 - O botão **Apagar chave salva** desvincula o terminal localmente. Após salvar, testar o CPF autorizado para confirmar autenticação. Guardar o terminal em ambiente supervisionado.
 - O fluxo GitHub Actions manual com `ISM_TERMINAL_KEY` permanece opcional, mas embutir o segredo no APK é menos seguro do que o pareamento local.
 - Limitação: a chave compartilhada de terminal ainda não identifica o cliente; para autoatendimento público, implementar autenticação forte, rate limit adequado e identificação individual de dispositivos.
+
+## PIX — confirmação e compartilhamento v0.4 (homologação)
+
+Fluxo: consultar CPF/CNPJ autorizado -> selecionar cobrança em aberto -> PIX -> apresentar QR Code -> cliente paga em seu banco -> **Verificar pagamento PIX**. O botão chama `POST /api/v1/faturas/{id}/confirmar-pix` usando a mesma sessão (TTL de 180 segundos) e chave de terminal.
+
+A consulta é **somente leitura** e valida novamente se a cobrança pertence ao cliente autenticado na sessão. O app só apresenta **PIX RECEBIDO** se o IXC retornar: `status=R`, `recebido_via_pix=S`, `aguardando_confirmacao_pagamento != S`, `estornado != S`, saldo aberto não positivo e `valor_recebido` positivo. Qualquer informação faltante ou inconclusiva não gera confirmação. A baixa pelo banco pode ser assíncrona.
+
+Quando confirmado, o Android gera um PDF **Confirmação de recebimento registrada no IXC** com ID da cobrança, valor, data (se houver), timestamp de verificação e TxID (se disponível). O arquivo contém a ressalva de que **não é o comprovante bancário original**. O operador toca em **Enviar confirmação pelo WhatsApp**; WhatsApp instalado abre para escolher destinatário. Caso indisponível, abre o menu de compartilhamento do Android. Não há envio automático nem acesso a contatos sem autorização.
+
+Não envie a confirmação quando pagamento estiver pendente, parcial, estornado, cancelado, ou identificado como recebido por outro meio. Não utilize o endpoint para alterar status no IXC. A função de cobrança via cartão foi deliberadamente excluída.
+
+### Testes
+- Testar primeiro com dados simulados (testes automatizados). Depois, usar cobrança **autorizada**, que já esteja baixada como PIX no IXC, para validar classificação dos campos da carteira local. Não pagar faturas reais apenas para homologar.
+- Verificar que fatura de outro cliente retorna 404, sessão inválida retorna 401, em aberto não gera PDF e falha de comunicação retorna erro sem sinalizar pagamento.
+- Em aparelho real, conferir PDF e compartilhamento para um contato explicitamente escolhido, sem incluir CPF no documento ou no texto.
+- O comprovante bancário original deve ser obtido pelo pagador em seu banco; esta funcionalidade não o substitui.
