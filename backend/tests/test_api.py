@@ -50,3 +50,20 @@ def test_no_receiver_fails_not_success():
 
 def test_safe_health():
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_nested_ixc_pix_qrcode():
+    from app.ixc import extract_pix_code
+    emv = "00020101021226800014br.gov.bcb.pix6304ABCD"
+    response = {
+        "gateway": {"gatewayNome": "TESTE"},
+        "pix": {
+            "dadosPix": {"devedor": {}, "valor": "89.90"},
+            "qrCode": {"imagemQrcode": "base64image", "qrcode": emv, "imagemSrc": ""}
+        },
+        "type": "pix",
+    }
+    assert extract_pix_code(response) == emv
+    assert extract_pix_code({"pix": {"qrCode": {"imagemQrcode": "base64image", "qrcode": "txid-123"}}}) == ""
+    assert extract_pix_code({"pix_copia_cola": emv}) == emv
+
