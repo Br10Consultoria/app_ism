@@ -20,6 +20,7 @@ def template_env_key(kind):
         "boas_vindas": "OPA_TEMPLATE_WELCOME_ID",
         "pix": "OPA_TEMPLATE_PIX_ID",
         "interessados": "OPA_TEMPLATE_LEAD_ID",
+        "prospecto": "OPA_TEMPLATE_PROSPECT_ID",
     }
     if kind not in keys:
         raise WhatsAppError("Tipo de mensagem Opa inválido", 422)
@@ -55,7 +56,7 @@ def _config(kind):
     return base, os.getenv("OPA_API_TOKEN", "").strip(), channel, template_id
 
 
-async def send_template(kind, phone, parameters):
+async def send_template(kind, phone, parameters, *, open_customer_service=False):
     """Retorna ID interno da mensagem do Opa; não garante entrega ao WhatsApp."""
     base, token, channel, template_id = _config(kind)
     if not re.fullmatch(r"55[1-9][0-9]9[0-9]{8}", phone):
@@ -73,6 +74,12 @@ async def send_template(kind, phone, parameters):
         "template": {"_id": template_id, "variaveis": variables},
         "canal": channel,
     }
+    if open_customer_service:
+        if kind != "prospecto":
+            raise WhatsAppError("Abertura de atendimento permitida apenas para interessados", 422)
+        # A API pode criar atendimento e iniciar fluxo/roteamento comercial.
+        # Opa pode recusar caso já exista um atendimento em andamento.
+        body["openCustomerService"] = True
     try:
         async with httpx.AsyncClient(
             timeout=15, follow_redirects=False, trust_env=False
