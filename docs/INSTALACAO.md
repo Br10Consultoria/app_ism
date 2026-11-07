@@ -104,3 +104,15 @@ Não envie a confirmação quando pagamento estiver pendente, parcial, estornado
 - O retorno de erro 404 para a rota de listagem agora orienta a atualizar o backend. Antes de instalar o novo APK, confirmar `GET /version` e redeploy do Docker.
 - Fluxo de homologação: utilizar uma fatura PIX previamente recebida no IXC, como a 218848, em uma sessão de cliente autorizado; conferir status, valor e compartilhamento. **Não realizar pagamentos adicionais sem necessidade.**
 - Continua sendo um sistema de atendimento **supervisionado**, pois CPF/CNPJ sem validação adicional não garante a identidade do titular. O PDF é confirmação do registro IXC, não comprovante do banco pagador.
+
+## ISM v0.7 — cliente identificado e 60 segundos a partir da tela PIX
+
+- A API `POST /api/v1/faturas` retorna `cliente.nome` (campo `razao` do IXC, com fallback para `nome`, `nome_razao`, `fantasia`) e CPF/CNPJ formatado, somente depois de localizar o cliente pela busca exata do documento. Não expõe endereço, senha nem credenciais.
+- O aplicativo mostra o **Nome do cliente** e **CPF/CNPJ** na lista de faturas, histórico PIX e tela de pagamento confirmado. Esses dados não são persistidos no terminal nem inseridos no PDF da confirmação.
+- Sessão dura **60 segundos** a partir de cada operação que a renova. `POST /api/v1/sessao/renovar` exige chave de terminal + sessão previamente válida; o Android só chama quando o técnico **abre Consultar PIX já recebidos** ou após uma confirmação PIX bem-sucedida. Não é uma renovação automática infinita; ao expirar, consultar o CPF/CNPJ novamente.
+- Ao entrar na tela **PIX já recebidos**, o cronômetro é reiniciado para 60 segundos. Ao confirmar uma fatura, reinicia novamente para que haja 60 segundos para compartilhar o documento no WhatsApp.
+- Ao expirar, a tela de dados sensíveis é fechada sem modal bloqueante: o usuário retorna à home e aparece uma mensagem breve (Toast).
+- `GET /version` deve responder `{"app":"ISM Telecom","versao":"0.7.0","sessao_segundos":60}` após atualização do Docker.
+- Teste operacional: consultar CPF autorizado, observar nome/CPF e tempo; tocar em Consultar PIX já recebidos e conferir reinício em 60 segundos; escolher PIX previamente confirmado no IXC, enviar o arquivo por compartilhamento; testar que título não-PIX não recebe confirmação.
+- Em aparelho Android onde o WhatsApp não aparece no menu de compartilhamento, instalar/autorizar WhatsApp ou WhatsApp Business (se permitido na maquininha) antes de validar envio. O compartilhamento depende de o aplicativo estar disponível.
+- **Segurança:** exibição de CPF exige atendimento supervisionado. Para operação não supervisionada, adicionar OTP/validação do titular e mascaramento. Use somente CPF de homologação autorizado e não envie prints com dados pessoais.
