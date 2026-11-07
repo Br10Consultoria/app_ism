@@ -120,10 +120,17 @@ async def health():
     return {"status": "ok"}
 
 
+@app.post("/api/v1/terminal/validar",
+          dependencies=[Depends(require_terminal), Depends(throttle)])
+async def validar_terminal():
+    """Valida a chave do terminal sem buscar nem expor dados de assinantes."""
+    return {"autorizado": True}
+
+
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.8.0", "sessao_segundos": 60}
+    return {"app": "ISM Telecom", "versao": "0.9.0", "sessao_segundos": 60}
 
 
 @app.post("/api/v1/sessao/renovar",
