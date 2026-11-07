@@ -17,9 +17,10 @@ from .ixc import digits, pick
 
 
 class WhatsAppError(Exception):
-    def __init__(self, message, status_code=503):
+    def __init__(self, message, status_code=503, retry_after_config=False):
         super().__init__(message)
         self.status_code = status_code
+        self.retry_after_config = retry_after_config
 
 
 def customer_phone(customer):
@@ -145,9 +146,12 @@ async def send_template(kind, phone, parameters):
             response.raise_for_status()
             result = response.json()
     except httpx.HTTPStatusError as exc:
-        # 4xx = rejeitado pela Meta, sem duplicar; 5xx = estado incerto.
-        raise WhatsAppError("Meta recusou a mensagem. Confira token e template aprovado.",
-                            502) from exc
+        # Resposta 4xx definitiva: nenhuma mensagem foi aceita; após ajustar
+        # token/template, o operador pode tentar novamente. 5xx é incerto.
+        raise WhatsAppError(
+            "Meta recusou a solicitação. Confira token e template aprovado.",
+            502, retry_after_config=400 <= exc.response.status_code < 500
+        ) from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise WhatsAppError(
             "Não foi possível confirmar aceitação pela Meta. Verifique no Business Manager antes de repetir.",
@@ -218,9 +222,21 @@ def _mark(event, state, msg_id=""):
             connection.close()
 
 
+def _release(event):
+    with _outbox_lock:
+        connection = _connect()
+        try:
+            connection.execute(
+                "DELETE FROM envio_whatsapp WHERE evento=? AND estado='em_processamento'",
+                (event,))
+            connection.commit()
+        finally:
+            connection.close()
+
+
 async def send_once(kind, customer_id, invoice_id, phone, parameters):
-    if not configured(kind):
-        raise WhatsAppError("WhatsApp Meta não configurado no backend", 503)
+    # Validar configuração/template antes de bloquear idempotência.
+    _config(kind)
     if not phone:
         raise WhatsAppError("Cliente sem WhatsApp celular válido no IXC", 422)
     event = _event_key(kind, customer_id, invoice_id)
@@ -229,9 +245,13 @@ async def send_once(kind, customer_id, invoice_id, phone, parameters):
                 "mensagem": "Mensagem já solicitada anteriormente. Consulte o histórico na Meta."}
     try:
         message_id = await send_template(kind, phone, parameters)
-    except WhatsAppError:
-        # Falhas e timeouts têm resultado incerto; não tentar envio duplicado automático.
-        _mark(event, "revisar")
+    except WhatsAppError as error:
+        if error.retry_after_config:
+            # Rejeição explícita HTTP 4xx: seguro corrigir configuração e reenviar.
+            _release(event)
+        else:
+            # Timeout, 5xx, resposta sem ID: estado de entrega incerto.
+            _mark(event, "revisar")
         raise
     _mark(event, "aceito_meta", message_id)
     return {"solicitado": True, "situacao": "aceito_meta",
