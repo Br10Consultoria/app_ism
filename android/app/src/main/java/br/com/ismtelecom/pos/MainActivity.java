@@ -79,7 +79,7 @@ public class MainActivity extends Activity {
     private static final int MUTED = Color.rgb(103, 126, 143);
     private static final int GREEN = Color.rgb(58, 169, 109);
     private static final int RED = Color.rgb(202, 66, 103);
-    private static final long SESSION_MILLIS = 180_000L; // Mesmo TTL do backend.
+    private static final long SESSION_MILLIS = 60_000L; // Mesmo TTL do backend.
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler ui = new Handler(Looper.getMainLooper());
     private LinearLayout content;
@@ -95,6 +95,23 @@ public class MainActivity extends Activity {
     private PdfRenderer renderer;
     private ParcelFileDescriptor pdfDescriptor;
     private int currentPage = 0;
+    private String pixWatchingInvoiceId = "";
+    private TextView pixStatus;
+
+    private final Runnable pixAutoCheck = new Runnable() {
+        @Override public void run() {
+            if (!"payment".equals(screenType) || pixWatchingInvoiceId.isEmpty()
+                    || !isSessionValid()) return;
+            if (!loading) checkPixPayment(pixWatchingInvoiceId, true);
+            ui.postDelayed(this, 8000);
+        }
+    };
+
+    private void stopPixAutoCheck() {
+        ui.removeCallbacks(pixAutoCheck);
+        pixWatchingInvoiceId = "";
+        pixStatus = null;
+    }
 
     private final Runnable sessionTick = new Runnable() {
         @Override public void run() {
@@ -423,6 +440,7 @@ public class MainActivity extends Activity {
     }
 
     private void resetSession() {
+        stopPixAutoCheck();
         ui.removeCallbacks(sessionTick);
         deadline = 0;
         session = "";
@@ -488,6 +506,7 @@ public class MainActivity extends Activity {
     }
 
     private void renderInvoices() {
+        stopPixAutoCheck();
         screenType = "invoices";
         closePdf();
         if (invoiceResponse == null) { showHome(); return; }
@@ -541,72 +560,86 @@ public class MainActivity extends Activity {
     /** Permite recuperar a confirmacao mesmo após o titulo sair de faturas em aberto.
      * Uma nova consulta por CPF/CNPJ gera uma nova sessão com tempo limitado. */
     private void showPaidPixHistory() {
+        stopPixAutoCheck();
         if (!isSessionValid()) {
             showLookup();
             dialog("Sessão expirada. Consulte o cliente novamente.");
             return;
         }
+
+        // Mostra a consulta pelo ID imediatamente, mesmo se a listagem falhar.
+        screenType = "pix-history";
+        closePdf();
+        initScreen("PIX já recebidos",
+                "Consulte uma fatura quitada por PIX sem pagar novamente.", true);
+
+        content.addView(label("Número da fatura PIX paga no IXC", 14, NAVY, true),
+                margins(-1, -2, 8));
+        EditText invoiceNumber = field("Número da fatura no IXC", InputType.TYPE_CLASS_NUMBER);
+        primary("Verificar pelo número da fatura", v -> {
+            String invoiceId = digits(invoiceNumber.getText().toString());
+            if (invoiceId.isEmpty() || invoiceId.length() > 15) {
+                dialog("Informe um número de fatura válido do IXC.");
+                return;
+            }
+            hideKeyboard(invoiceNumber);
+            checkPixPayment(invoiceId);
+        });
+
+        content.addView(label("Ou selecione um PIX recebido recentemente:", 14, NAVY, true),
+                margins(-1, -2, 10));
+        LinearLayout historyResults = col();
+        content.addView(historyResults, margins(-1, -2, 15));
+        historyResults.addView(label("Consultando recebimentos no IXC...", 12, MUTED, false));
+        content.addView(label("A lista cobre até 100 títulos recentes. " +
+                "Se não encontrar o pagamento, use o número da fatura acima.",
+                12, MUTED, false), margins(-1, -2, 12));
+        primary("Voltar às faturas", v -> {
+            if (isSessionValid()) renderInvoices();
+            else showLookup();
+        });
+        primary("Nova consulta", v -> showLookup());
+
         JSONObject request = new JSONObject();
         try { request.put("session", session); } catch (JSONException ignored) {}
         call("/api/v1/faturas/pix-recebidos", request, result -> {
-            screenType = "pix-history";
-            closePdf();
-            initScreen("PIX recebidos",
-                    "Pagamentos PIX já confirmados no IXC. Selecione uma cobrança para validar novamente e compartilhar.",
-                    true);
+            if (!"pix-history".equals(screenType)) return;
+            historyResults.removeAllViews();
             JSONArray received = result.optJSONArray("pix_recebidos");
             int count = received == null ? 0 : received.length();
             if (count == 0) {
-                content.addView(label(
-                        "Nenhum PIX confirmado foi encontrado entre os 100 títulos mais recentes deste cliente.",
-                        14, MUTED, false), margins(-1, -2, 18));
-            } else {
-                for (int i = 0; i < count; i++) {
-                    JSONObject entry = received.optJSONObject(i);
-                    if (entry == null) continue;
-                    String id = entry.optString("id");
-                    if (!id.matches("[0-9]+")) continue;
-
-                    LinearLayout card = col();
-                    card.setPadding(dp(12), dp(14), dp(12), dp(12));
-                    card.setBackground(shape(Color.WHITE, 14, Color.rgb(218, 233, 240)));
-                    card.addView(label("PIX recebido - Fatura " + id, 15, GREEN, true),
-                            margins(-1, -2, 8));
-                    card.addView(label("Valor: " + money(entry.optString("valor_recebido")),
-                                    14, NAVY, true), margins(-1, -2, 6));
-                    String paymentDate = entry.optString("data_pagamento");
-                    if (!paymentDate.isEmpty()) {
-                        card.addView(label("Pagamento: " + dateBR(paymentDate),
-                                        12, MUTED, false), margins(-1, -2, 8));
-                    }
-                    Button confirm = button("Verificar e enviar confirmação", CYAN, true);
-                    confirm.setOnClickListener(v -> checkPixPayment(id));
-                    card.addView(confirm, margins(-1, dp(49), 0));
-                    content.addView(card, margins(-1, -2, 12));
-                }
+                historyResults.addView(label(
+                        "Nenhum PIX confirmado encontrado entre os títulos recentes.",
+                        12, MUTED, false));
+                return;
             }
-            content.addView(label(
-                    "Mostramos até 10 PIX confirmados entre os 100 títulos mais recentes. " +
-                    "Antes de emitir a confirmação o IXC será consultado novamente.",
-                    12, MUTED, false), margins(-1, -2, 15));
-
-            content.addView(label("Sabe o número de uma fatura PIX já paga?", 14, NAVY, true),
-                    margins(-1, -2, 8));
-            EditText invoiceNumber = field("Número da fatura no IXC", InputType.TYPE_CLASS_NUMBER);
-            primary("Verificar pelo número da fatura", v -> {
-                String invoiceId = digits(invoiceNumber.getText().toString());
-                if (invoiceId.isEmpty() || invoiceId.length() > 15) {
-                    dialog("Informe um número de fatura válido do IXC.");
-                    return;
-                }
-                hideKeyboard(invoiceNumber);
-                checkPixPayment(invoiceId);
-            });
-            primary("Voltar às faturas", v -> {
-                if (isSessionValid()) renderInvoices();
-                else showLookup();
-            });
-            primary("Nova consulta", v -> showLookup());
+            for (int i = 0; i < count; i++) {
+                JSONObject entry = received.optJSONObject(i);
+                if (entry == null) continue;
+                String id = entry.optString("id");
+                if (!id.matches("[0-9]+")) continue;
+                LinearLayout card = col();
+                card.setPadding(dp(12), dp(12), dp(12), dp(12));
+                card.setBackground(shape(Color.WHITE, 14, Color.rgb(218, 233, 240)));
+                card.addView(label("PIX recebido - Fatura " + id, 14, GREEN, true),
+                        margins(-1, -2, 8));
+                card.addView(label("Valor: " + money(entry.optString("valor_recebido")),
+                        14, NAVY, true), margins(-1, -2, 8));
+                String date = entry.optString("data_pagamento");
+                if (!date.isEmpty()) card.addView(
+                        label("Pagamento: " + dateBR(date), 12, MUTED, false),
+                        margins(-1, -2, 8));
+                Button confirm = button("Verificar e enviar confirmação", CYAN, true);
+                confirm.setOnClickListener(v -> checkPixPayment(id));
+                card.addView(confirm, margins(-1, dp(49), 0));
+                historyResults.addView(card, margins(-1, -2, 10));
+            }
+        }, message -> {
+            if (!"pix-history".equals(screenType)) return;
+            historyResults.removeAllViews();
+            historyResults.addView(label("Lista indisponível: " + message +
+                            " Você ainda pode consultar pelo número da fatura acima.",
+                    12, RED, false));
         });
     }
 
@@ -684,6 +717,7 @@ public class MainActivity extends Activity {
     }
 
     private void showPayment(JSONObject result) {
+        stopPixAutoCheck();
         screenType = "payment";
         closePdf();
         String kind = result.optString("tipo");
@@ -694,11 +728,16 @@ public class MainActivity extends Activity {
             content.addView(label("PIX copia e cola", 18, NAVY, true), margins(-1, -2, 12));
             displayQr(code);
             displayCode(code);
-            TextView help = label("Após o cliente pagar no banco, toque para consultar a baixa no IXC. " +
-                    "A exibição do QR Code não confirma o recebimento.", 12, MUTED, false);
+            TextView help = label("O aplicativo verifica o PIX no IXC a cada 8 segundos, " +
+                    "enquanto esta tela e a sessão estiverem ativas. " +
+                    "O QR Code sozinho não comprova pagamento.", 12, MUTED, false);
             content.addView(help, margins(-1, -2, 12));
             String invoiceId = result.optString("id");
-            primary("Verificar pagamento PIX", v -> checkPixPayment(invoiceId));
+            pixWatchingInvoiceId = invoiceId;
+            pixStatus = label("Aguardando a confirmação do PIX no IXC...", 14, NAVY, true);
+            content.addView(pixStatus, margins(-1, -2, 12));
+            primary("Verificar pagamento agora", v -> checkPixPayment(invoiceId, false));
+            ui.postDelayed(pixAutoCheck, 6000);
         } else if ("barra".equals(kind)) {
             content.addView(label("Linha digitável", 18, NAVY, true), margins(-1, -2, 12));
             displayCode(code);
@@ -727,6 +766,10 @@ public class MainActivity extends Activity {
     }
 
     private void checkPixPayment(String invoiceId) {
+        checkPixPayment(invoiceId, false);
+    }
+
+    private void checkPixPayment(String invoiceId, boolean automatic) {
         if (!isSessionValid()) {
             showHome();
             dialog("Sessão expirada. Consulte o cliente novamente.");
@@ -739,6 +782,8 @@ public class MainActivity extends Activity {
         JSONObject request = new JSONObject();
         try { request.put("session", session); } catch (JSONException ignored) {}
         call("/api/v1/faturas/" + invoiceId + "/confirmar-pix", request, result -> {
+            if (automatic && (!"payment".equals(screenType)
+                    || !invoiceId.equals(pixWatchingInvoiceId))) return;
             if (result.optBoolean("confirmado", false)
                     && "confirmado".equals(result.optString("situacao"))) {
                 showPixReceipt(result);
@@ -759,11 +804,25 @@ public class MainActivity extends Activity {
                 default: detail = "Não foi possível comprovar o recebimento via PIX " +
                         "com os dados atuais do IXC. Consulte o financeiro."; break;
             }
-            dialog(detail);
+            if (automatic) {
+                if (pixStatus != null) pixStatus.setText(detail);
+                if (!"aguardando".equals(state)) stopPixAutoCheck();
+            } else {
+                dialog(detail);
+            }
+        }, message -> {
+            if (automatic) {
+                if (pixStatus != null) pixStatus.setText(
+                        "Falha na consulta. Use o botão Verificar pagamento agora.");
+                stopPixAutoCheck();
+            } else {
+                dialog(message);
+            }
         });
     }
 
     private void showPixReceipt(JSONObject receipt) {
+        stopPixAutoCheck();
         screenType = "receipt";
         closePdf();
         initScreen("Pagamento confirmado", "A baixa via PIX foi confirmada no IXC.", true);
@@ -1084,8 +1143,13 @@ public class MainActivity extends Activity {
     }
 
     private interface Success { void done(JSONObject response); }
+    private interface Failure { void error(String message); }
 
     private void call(String path, JSONObject data, Success onSuccess) {
+        call(path, data, onSuccess, null);
+    }
+
+    private void call(String path, JSONObject data, Success onSuccess, Failure onFailure) {
         if (loading) return;
         final String secretKey = terminalKey();
         final String baseUrl = apiBase();
@@ -1124,7 +1188,12 @@ public class MainActivity extends Activity {
                     }
                 }
                 JSONObject result = new JSONObject(buffer.toString("UTF-8"));
-                if (status >= 400) throw new IOException(result.optString("detail", "Consulta indisponível"));
+                if (status >= 400) {
+                    if (status == 404 && "/api/v1/faturas/pix-recebidos".equals(path))
+                        throw new IOException("Consultar PIX recebidos não está disponível no servidor. " +
+                                "Atualize o backend ISM para v0.6 e tente novamente.");
+                    throw new IOException(result.optString("detail", "Consulta indisponível"));
+                }
                 ui.post(() -> {
                     loading = false;
                     removeProgress(progress);
@@ -1141,7 +1210,10 @@ public class MainActivity extends Activity {
                 ui.post(() -> {
                     loading = false;
                     removeProgress(progress);
-                    if (epoch == requestEpoch) dialog(message);
+                    if (epoch == requestEpoch) {
+                        if (onFailure != null) onFailure.error(message);
+                        else dialog(message);
+                    }
                 });
             } finally {
                 if (conn != null) conn.disconnect();
@@ -1171,6 +1243,7 @@ public class MainActivity extends Activity {
     @Override public void onBackPressed() { backToInvoicesOrHome(); }
 
     @Override protected void onDestroy() {
+        stopPixAutoCheck();
         resetSession();
         closePdf();
         executor.shutdownNow();

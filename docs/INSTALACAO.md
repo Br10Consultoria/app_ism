@@ -94,3 +94,13 @@ Não envie a confirmação quando pagamento estiver pendente, parcial, estornado
 - Se a baixa demorar além de 180 segundos, faça nova consulta por CPF/CNPJ. Não é necessário pagar outra vez nem recuperar uma sessão vencida.
 - A consulta e os comprovantes são apropriados **apenas em atendimento supervisionado por técnico**. CPF/CNPJ por si só não autentica o titular; implementar validação adicional antes de disponibilizar em autoatendimento público.
 - Não há recebimento por Getnet nesta etapa. O QR Code continua sendo emitido pelo IXC; o WhatsApp abre no Android para envio manual pelo técnico.
+
+## ISM v0.6 — PIX, homologação Android e sessão de 60 segundos
+
+- O servidor retorna `GET /version` com versão `0.6.0` e `sessao_segundos: 60`, sem expor segredos. Verificar com `curl -fsS https://app.ismtelecom.com.br/version`; caso responda 404, o backend ainda não foi atualizado.
+- A sessão do backend e do Android expira em **60 segundos**, contados desde a consulta CPF/CNPJ. Ao expirar, o aplicativo limpa os dados e volta à tela inicial. Para confirmar pagamentos que baixem depois disso, faça uma nova consulta.
+- Na tela do QR Code PIX o app consulta a baixa no IXC **a cada 8 segundos**, desde que a sessão esteja ativa. Quando confirmada, mostra a tela "PIX RECEBIDO" e permite gerar o PDF para compartilhamento no WhatsApp. Também existe o botão "Verificar pagamento agora". A ausência de confirmação **não significa falha no pagamento bancário**.
+- A tela "Consultar PIX já recebidos" agora abre **antes** de buscar a lista. Mesmo que a consulta dos 100 títulos mais recentes falhe, o técnico pode informar o número de uma fatura PIX já quitada e verificar diretamente, sempre validando que pertence ao CPF/CNPJ da sessão.
+- O retorno de erro 404 para a rota de listagem agora orienta a atualizar o backend. Antes de instalar o novo APK, confirmar `GET /version` e redeploy do Docker.
+- Fluxo de homologação: utilizar uma fatura PIX previamente recebida no IXC, como a 218848, em uma sessão de cliente autorizado; conferir status, valor e compartilhamento. **Não realizar pagamentos adicionais sem necessidade.**
+- Continua sendo um sistema de atendimento **supervisionado**, pois CPF/CNPJ sem validação adicional não garante a identidade do titular. O PDF é confirmação do registro IXC, não comprovante do banco pagador.
