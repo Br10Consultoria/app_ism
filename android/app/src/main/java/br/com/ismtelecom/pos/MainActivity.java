@@ -1322,7 +1322,7 @@ public class MainActivity extends Activity {
         EditText customerId = field("ID Cliente (opcional)", InputType.TYPE_CLASS_TEXT);
         EditText tech = field("Identificação do técnico", InputType.TYPE_CLASS_TEXT);
         CheckBox consent = new CheckBox(this);
-        consent.setText("O interessado autorizou o contato comercial da ISM Telecom.");
+        consent.setText("O interessado autorizou a ISM Telecom a entrar em contato pelo WhatsApp ou telefone para tratar da contratação.");
         consent.setTextSize(13);
         consent.setTextColor(NAVY);
         content.addView(consent, margins(-1, -2, 12));
@@ -1352,9 +1352,13 @@ public class MainActivity extends Activity {
                 screenType = "lead-confirmation";
                 boolean forwarded = response.optBoolean("enviado", false);
                 String situation = response.optString("situacao", "pendente");
-                if (forwarded) {
+                if ("mensagem_cliente".equals(situation)) {
+                    initScreen("Interesse registrado",
+                            "Recebemos seu interesse! Solicitação de contato via WhatsApp aceita pelo Opa! Suite.",
+                            true);
+                } else if (forwarded) {
                     initScreen("Contato encaminhado",
-                            "O pedido foi aceito pelo canal comercial. A equipe dará continuidade.",
+                            "O canal comercial aceitou a solicitação. Aguarde o contato da equipe.",
                             true);
                 } else if ("revisar".equals(situation)) {
                     initScreen("Contato registrado",
