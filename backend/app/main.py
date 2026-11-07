@@ -21,6 +21,10 @@ from pydantic import BaseModel, Field
 
 from .ixc import IXC, IXCError, digits, valid_cpf, valid_document, format_document, pick
 from .pix_confirmation import verify_pix_receipt
+from .whatsapp_meta import (
+    WhatsAppError, customer_phone, phone_mask, first_name, new_customer,
+    configured as meta_configured, send_once
+)
 
 app = FastAPI(title="ISM Telecom — API do Terminal", docs_url=None, redoc_url=None)
 rate_lock = Lock()
@@ -33,6 +37,14 @@ class Lookup(BaseModel):
 
 class SessionRequest(BaseModel):
     session: str = Field(min_length=15, max_length=1500)
+
+
+class WhatsAppRequest(SessionRequest):
+    consentimento: bool
+
+
+class WelcomeRequest(WhatsAppRequest):
+    confirma_novo_cliente: bool
 
 
 class Lead(BaseModel):
@@ -111,7 +123,7 @@ async def health():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.7.0", "sessao_segundos": 60}
+    return {"app": "ISM Telecom", "versao": "0.8.0", "sessao_segundos": 60}
 
 
 @app.post("/api/v1/sessao/renovar",
@@ -139,10 +151,20 @@ async def faturas(body: Lookup):
         # Somente dados do cliente que teve o documento validado na consulta.
         # Nunca retornar os campos bancarios, tokens ou endereco do cadastro IXC.
         customer_name = pick(client, ("razao", "nome", "nome_razao", "fantasia"))
+        cellphone = customer_phone(client)
         return {"session": create_session(client_id),
                 "cliente": {
                     "nome": customer_name[:100] or "Nome não informado pelo IXC",
                     "cpf": format_document(body.cpf)
+                },
+                "whatsapp": {
+                    "destinatario_mascarado": phone_mask(cellphone),
+                    "boas_vindas_disponivel": bool(
+                        cellphone and new_customer(client) and meta_configured("boas_vindas")
+                    ),
+                    "confirmacao_pix_disponivel": bool(
+                        cellphone and meta_configured("pix")
+                    )
                 },
                 "faturas": [make_invoice(row) for row in invoices],
                 "mensagem": "" if invoices else "Nenhuma cobrança em aberto"}
@@ -199,6 +221,78 @@ async def confirmar_pix(invoice_id: int, body: SessionRequest):
     except IXCError:
         # Não confundir falha de conexão com pagamento pendente ou confirmado.
         raise HTTPException(502, "Não foi possível consultar a baixa no IXC")
+
+
+
+@app.post("/api/v1/whatsapp/boas-vindas",
+          dependencies=[Depends(require_terminal), Depends(throttle)])
+async def whatsapp_boas_vindas(body: WelcomeRequest):
+    """Enviar apenas para cliente novo, ativo no IXC e com autorização confirmada."""
+    if not body.consentimento or not body.confirma_novo_cliente:
+        raise HTTPException(422, "Confirme novo cadastro e autorização do cliente")
+    client_id = read_session(body.session)
+    try:
+        ixc = IXC()
+        customer = await ixc.customer_by_id(client_id)
+        if not customer or str(customer.get("id")) != client_id:
+            raise HTTPException(404, "Cliente não localizado no IXC")
+        if not new_customer(customer):
+            raise HTTPException(409, "Boas-vindas reservadas a novos clientes cadastrados no IXC")
+        phone = customer_phone(customer)
+        if not phone:
+            raise HTTPException(422, "Cliente sem WhatsApp celular válido no IXC")
+        result = await send_once(
+            "boas_vindas", client_id, "", phone,
+            [first_name(customer), client_id],
+        )
+        return {**result, "destinatario_mascarado": phone_mask(phone)}
+    except IXCError:
+        raise HTTPException(502, "Falha na consulta ao cadastro do cliente no IXC")
+    except WhatsAppError as error:
+        raise HTTPException(error.status_code, str(error))
+
+
+@app.post("/api/v1/whatsapp/pix/{invoice_id}",
+          dependencies=[Depends(require_terminal), Depends(throttle)])
+async def whatsapp_pix(invoice_id: int, body: WhatsAppRequest):
+    """Template informativo sobre PIX realmente baixado; nunca envia por estado presumido."""
+    if invoice_id < 1:
+        raise HTTPException(404, "Fatura inválida")
+    if not body.consentimento:
+        raise HTTPException(422, "É necessário confirmar autorização do cliente para o WhatsApp")
+    client_id = read_session(body.session)
+    try:
+        ixc = IXC()
+        invoice = await ixc.invoice(invoice_id)
+        if not invoice or str(invoice.get("id_cliente")) != client_id:
+            raise HTTPException(404, "Fatura não encontrada para este cliente")
+        receipt = verify_pix_receipt(invoice)
+        if not receipt["confirmado"]:
+            raise HTTPException(409, "PIX ainda não confirmado no IXC; mensagem não enviada")
+
+        customer = await ixc.customer_by_id(client_id)
+        if not customer or str(customer.get("id")) != client_id:
+            raise HTTPException(404, "Cliente não localizado no IXC")
+        phone = customer_phone(customer)
+        if not phone:
+            raise HTTPException(422, "Cliente sem WhatsApp celular válido no IXC")
+
+        payment_date = receipt.get("data_pagamento") or ""
+        if re.match(r"^\\d{4}-\\d{2}-\\d{2}", payment_date):
+            payment_date = payment_date[8:10] + "/" + payment_date[5:7] + "/" + payment_date[:4]
+        if not payment_date:
+            payment_date = "data não informada pelo IXC"
+        payment_date = payment_date[:40]
+
+        result = await send_once(
+            "pix", client_id, receipt["id"], phone,
+            [first_name(customer), receipt["valor_recebido"], receipt["id"], payment_date]
+        )
+        return {**result, "destinatario_mascarado": phone_mask(phone)}
+    except IXCError:
+        raise HTTPException(502, "Falha ao consultar PIX ou cliente no IXC")
+    except WhatsAppError as error:
+        raise HTTPException(error.status_code, str(error))
 
 
 @app.post("/api/v1/faturas/{invoice_id}/{kind}", dependencies=[Depends(require_terminal), Depends(throttle)])
