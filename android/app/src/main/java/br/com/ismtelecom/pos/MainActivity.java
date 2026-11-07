@@ -293,6 +293,13 @@ public class MainActivity extends Activity {
             case "invoices":
                 showLookup();
                 break;
+            case "pix-history":
+                if (invoiceResponse != null && isSessionValid()) renderInvoices();
+                else showLookup();
+                break;
+            case "receipt":
+                showLookup();
+                break;
             case "home":
                 confirmExit();
                 break;
@@ -489,6 +496,12 @@ public class MainActivity extends Activity {
         initScreen("Boletos e\npagamentos",
                 "Olá! Encontramos " + count + (count == 1 ? " fatura disponível." : " faturas disponíveis."), true);
 
+        if (isSessionValid()) {
+            primary("Consultar PIX já recebidos", v -> showPaidPixHistory());
+            content.addView(label("Consulte um PIX já pago no IXC e compartilhe a confirmação.",
+                    12, MUTED, false), margins(-1, -2, 14));
+        }
+
         if (count == 0) {
             TextView empty = label(invoiceResponse.optString("mensagem", "Não há cobranças disponíveis."),
                     16, NAVY, true);
@@ -523,6 +536,78 @@ public class MainActivity extends Activity {
             TextView empty = label("Nenhuma fatura corresponde ao filtro selecionado.", 14, MUTED, false);
             content.addView(empty);
         }
+    }
+
+    /** Permite recuperar a confirmacao mesmo após o titulo sair de faturas em aberto.
+     * Uma nova consulta por CPF/CNPJ gera uma nova sessão com tempo limitado. */
+    private void showPaidPixHistory() {
+        if (!isSessionValid()) {
+            showLookup();
+            dialog("Sessão expirada. Consulte o cliente novamente.");
+            return;
+        }
+        JSONObject request = new JSONObject();
+        try { request.put("session", session); } catch (JSONException ignored) {}
+        call("/api/v1/faturas/pix-recebidos", request, result -> {
+            screenType = "pix-history";
+            closePdf();
+            initScreen("PIX recebidos",
+                    "Pagamentos PIX já confirmados no IXC. Selecione uma cobrança para validar novamente e compartilhar.",
+                    true);
+            JSONArray received = result.optJSONArray("pix_recebidos");
+            int count = received == null ? 0 : received.length();
+            if (count == 0) {
+                content.addView(label(
+                        "Nenhum PIX confirmado foi encontrado entre os 100 títulos mais recentes deste cliente.",
+                        14, MUTED, false), margins(-1, -2, 18));
+            } else {
+                for (int i = 0; i < count; i++) {
+                    JSONObject entry = received.optJSONObject(i);
+                    if (entry == null) continue;
+                    String id = entry.optString("id");
+                    if (!id.matches("[0-9]+")) continue;
+
+                    LinearLayout card = col();
+                    card.setPadding(dp(12), dp(14), dp(12), dp(12));
+                    card.setBackground(shape(Color.WHITE, 14, Color.rgb(218, 233, 240)));
+                    card.addView(label("PIX recebido - Fatura " + id, 15, GREEN, true),
+                            margins(-1, -2, 8));
+                    card.addView(label("Valor: " + money(entry.optString("valor_recebido")),
+                                    14, NAVY, true), margins(-1, -2, 6));
+                    String paymentDate = entry.optString("data_pagamento");
+                    if (!paymentDate.isEmpty()) {
+                        card.addView(label("Pagamento: " + dateBR(paymentDate),
+                                        12, MUTED, false), margins(-1, -2, 8));
+                    }
+                    Button confirm = button("Verificar e enviar confirmação", CYAN, true);
+                    confirm.setOnClickListener(v -> checkPixPayment(id));
+                    card.addView(confirm, margins(-1, dp(49), 0));
+                    content.addView(card, margins(-1, -2, 12));
+                }
+            }
+            content.addView(label(
+                    "Mostramos até 10 PIX confirmados entre os 100 títulos mais recentes. " +
+                    "Antes de emitir a confirmação o IXC será consultado novamente.",
+                    12, MUTED, false), margins(-1, -2, 15));
+
+            content.addView(label("Sabe o número de uma fatura PIX já paga?", 14, NAVY, true),
+                    margins(-1, -2, 8));
+            EditText invoiceNumber = field("Número da fatura no IXC", InputType.TYPE_CLASS_NUMBER);
+            primary("Verificar pelo número da fatura", v -> {
+                String invoiceId = digits(invoiceNumber.getText().toString());
+                if (invoiceId.isEmpty() || invoiceId.length() > 15) {
+                    dialog("Informe um número de fatura válido do IXC.");
+                    return;
+                }
+                hideKeyboard(invoiceNumber);
+                checkPixPayment(invoiceId);
+            });
+            primary("Voltar às faturas", v -> {
+                if (isSessionValid()) renderInvoices();
+                else showLookup();
+            });
+            primary("Nova consulta", v -> showLookup());
+        });
     }
 
     private void addInvoiceCard(JSONObject invoice, boolean late) {

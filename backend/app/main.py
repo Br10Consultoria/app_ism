@@ -129,6 +129,36 @@ async def faturas(body: Lookup):
         raise HTTPException(502, "Erro ao consultar cobranças no IXC")
 
 
+@app.post("/api/v1/faturas/pix-recebidos",
+          dependencies=[Depends(require_terminal), Depends(throttle)])
+async def pix_recebidos(body: SessionRequest):
+    """Somente leitura. Retorna ate 10 PIX confirmados dos 100 titulos mais recentes."""
+    customer_id = read_session(body.session)
+    try:
+        ixc = IXC()
+        rows = await ixc.recent_customer_invoices(customer_id)
+        result = []
+        for row in rows:
+            if str(row.get("id_cliente")) != customer_id:
+                continue
+            if not str(row.get("id") or "").isdigit():
+                continue
+            receipt = verify_pix_receipt(row)
+            if not receipt["confirmado"]:
+                continue
+            result.append({
+                "id": receipt["id"],
+                "valor_recebido": receipt["valor_recebido"],
+                "data_pagamento": receipt["data_pagamento"],
+                "documento": receipt["documento"],
+            })
+            if len(result) == 10:
+                break
+        return {"pix_recebidos": result, "limite_consulta": 100}
+    except IXCError:
+        raise HTTPException(502, "Nao foi possivel consultar recebimentos PIX no IXC")
+
+
 @app.post("/api/v1/faturas/{invoice_id}/confirmar-pix",
           dependencies=[Depends(require_terminal), Depends(throttle)])
 async def confirmar_pix(invoice_id: int, body: SessionRequest):

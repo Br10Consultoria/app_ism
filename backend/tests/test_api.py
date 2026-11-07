@@ -209,3 +209,60 @@ def test_pix_confirmation_unknown_not_claimed_paid(monkeypatch):
                     headers=headers, json={"session": create_session("123")})
     assert r.status_code == 200
     assert r.json() == {"situacao": "aguardando", "confirmado": False}
+
+
+
+def test_recent_pix_received_requires_auth_scope_and_checks_status(monkeypatch):
+    from app import main as module
+
+    class FakeIXC:
+        async def recent_customer_invoices(self, customer_id):
+            assert customer_id == "123"
+            return [
+                {"id": "218848", "id_cliente": "123", "status": "R",
+                 "recebido_via_pix": "S", "valor_recebido": "0.10", "valor_aberto": "0.00",
+                 "aguardando_confirmacao_pagamento": "N", "estornado": "N",
+                 "documento": "T-10", "data_pagamento": "2026-11-06"},
+                {"id": "295590", "id_cliente": "123", "status": "R",
+                 "recebido_via_pix": "N", "valor_recebido": "179.80", "valor_aberto": "0.00"},
+                {"id": "30", "id_cliente": "999", "status": "R",
+                 "recebido_via_pix": "S", "valor_recebido": "10.00", "valor_aberto": "0.00"},
+                {"id": "40", "id_cliente": "123", "status": "A",
+                 "recebido_via_pix": "N"},
+            ]
+
+    monkeypatch.setattr(module, "IXC", FakeIXC)
+    url = "/api/v1/faturas/pix-recebidos"
+    session = {"session": create_session("123")}
+    assert client.post(url, json=session).status_code == 401
+    assert client.post(url, headers=headers, json={"session": "invalid"}).status_code == 422
+    response = client.post(url, headers=headers, json=session)
+    assert response.status_code == 200
+    assert response.json()["limite_consulta"] == 100
+    assert response.json()["pix_recebidos"] == [{
+        "id": "218848", "valor_recebido": "0.10", "data_pagamento": "2026-11-06",
+        "documento": "T-10"
+    }]
+    assert "cpf" not in response.text
+    assert "295590" not in response.text
+    assert "999" not in response.text
+
+
+def test_recent_invoices_query_descending(monkeypatch):
+    import asyncio
+    from app.ixc import IXC
+
+    async def fake_list(self, endpoint, field, value, limit, **kwargs):
+        assert endpoint == "fn_areceber"
+        assert field == "fn_areceber.id_cliente"
+        assert value == "123"
+        assert limit == 100
+        assert kwargs["sortname"] == "fn_areceber.id"
+        assert kwargs["sortorder"] == "desc"
+        return []
+
+    monkeypatch.setattr(IXC, "list_records", fake_list)
+    monkeypatch.setenv("IXC_URL", "https://ixc.example.test")
+    monkeypatch.setenv("IXC_USER_ID", "test")
+    monkeypatch.setenv("IXC_TOKEN", "test")
+    assert asyncio.run(IXC().recent_customer_invoices("123")) == []
