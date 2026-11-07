@@ -10,6 +10,7 @@ import json
 import os
 import re
 import smtplib
+import sqlite3
 import time
 import uuid
 from threading import Lock
@@ -449,7 +450,7 @@ async def interessados(body: Lead):
     }
     try:
         saved = save_interest(data)
-    except (OSError, ValueError):
+    except (OSError, ValueError, sqlite3.Error):
         raise HTTPException(503, "Falha ao registrar o interessado; tente novamente")
     data["protocolo"] = saved["protocolo"]
     if not saved["novo"]:
