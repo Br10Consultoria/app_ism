@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 from app import main as module
 from app import whatsapp_opa as opa
 
+REAL_OPA_SEND = opa.send_template
+
 
 @pytest.fixture
 def opa_env(monkeypatch, tmp_path):
@@ -128,7 +130,7 @@ def test_opa_template_send_format(opa_env, monkeypatch):
             })
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeHttpClient)
-    id_ = asyncio.run(opa.send_template(
+    id_ = asyncio.run(REAL_OPA_SEND(
         "pix", "5571988887777",
         ["Cliente", "1.00", "443284", "07/11/2026"]
     ))
