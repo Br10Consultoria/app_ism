@@ -116,3 +116,44 @@ Não envie a confirmação quando pagamento estiver pendente, parcial, estornado
 - Teste operacional: consultar CPF autorizado, observar nome/CPF e tempo; tocar em Consultar PIX já recebidos e conferir reinício em 60 segundos; escolher PIX previamente confirmado no IXC, enviar o arquivo por compartilhamento; testar que título não-PIX não recebe confirmação.
 - Em aparelho Android onde o WhatsApp não aparece no menu de compartilhamento, instalar/autorizar WhatsApp ou WhatsApp Business (se permitido na maquininha) antes de validar envio. O compartilhamento depende de o aplicativo estar disponível.
 - **Segurança:** exibição de CPF exige atendimento supervisionado. Para operação não supervisionada, adicionar OTP/validação do titular e mascaramento. Use somente CPF de homologação autorizado e não envie prints com dados pessoais.
+
+
+## ISM v0.8 — WhatsApp Cloud API via backend (sem WhatsApp no Android)
+
+**Fluxos separados:**
+- **Boas-vindas de novos assinantes:** o cliente precisa estar cadastrado como novo no IXC, ativo e com `data_cadastro` recente (últimos 30 dias por padrão). Após consulta do CPF/CNPJ pelo técnico, a opção só aparece se o IXC tiver WhatsApp/celular válido e o backend Meta estiver configurado. O operador precisa confirmar que o cliente consentiu. Nunca confundir este caso com **Quero contratar**, que é apenas captação de interessado.
+- **Confirmação de PIX:** na tela com `PIX RECEBIDO`, o operador toca **Enviar confirmação PIX via API WhatsApp** e confirma autorização. O backend valida novamente a titularidade e a baixa PIX real no IXC (`status=R`, `recebido_via_pix=S`, sem estorno, saldo zero e valor positivo); somente então aciona o template Meta.
+- **PDF via Android** permanece como alternativa, mas não é enviado automaticamente à Meta. A mensagem de pagamento por Meta é *texto* de confirmação do registro no IXC, não comprovante bancário.
+
+**Configuração no Ubuntu (arquivo `backend/.env`, jamais no APK/GitHub):**
+
+```dotenv
+META_WHATSAPP_ACCESS_TOKEN=COLE_AQUI_TOKEN_OFICIAL_DE_SISTEMA
+META_WHATSAPP_PHONE_NUMBER_ID=COLE_AQUI_PHONE_NUMBER_ID_META
+META_GRAPH_VERSION=v26.0
+META_TEMPLATE_LANGUAGE=pt_BR
+META_TEMPLATE_WELCOME=ism_boas_vindas_cliente
+META_TEMPLATE_PIX=ism_pix_recebido
+META_NEW_CLIENT_MAX_DAYS=30
+META_OUTBOX_DB=/data/whatsapp_outbox.db
+```
+
+Os nomes são **exemplos**: precisam ser substituídos pelos nomes dos templates que realmente estejam **aprovados/ativos** no WhatsApp Manager da ISM, com código de idioma `pt_BR` e quantidades e ordem de variáveis exatas. Um token de usuário de sistema precisa ter permissões WhatsApp Cloud API sobre o `phone_number_id` correto.
+
+**Texto sugerido para template `ism_boas_vindas_cliente` (2 parâmetros):**
+
+> Olá, {{1}}! Seja muito bem-vindo(a) à ISM TELECOM! Estamos muito felizes em ter você como nosso cliente. Agradecemos a confiança em nossa conexão! ID {{2}}. Aqui estão alguns links úteis para facilitar seu dia a dia: Central do Assinante: https://ixc.ismtelecom.com.br/central_assinante_web/login (boletos e faturas). Suporte Técnico: 71 3334-0606.
+
+**Texto sugerido para template `ism_pix_recebido` (4 parâmetros):**
+
+> Olá, {{1}}! A ISM TELECOM confirmou no IXC um recebimento via PIX de R$ {{2}}, referente à fatura {{3}}, com data de pagamento {{4}}. Esta é uma confirmação do registro de recebimento no IXC e não substitui o comprovante bancário original. Suporte: 71 3334-0606.
+
+As categorias Utility/Marketing são definidas e validadas pela Meta; evite promoções em mensagens transacionais. As mensagens fora da janela de atendimento exigem modelo aprovado. A conta de origem **não é o chip da maquininha**, mas o número oficial vinculado à WhatsApp Business Platform da ISM.
+
+**Cuidados e limites:**
+- API não aceita número de celular informado pelo Android. Destinatário é `whatsapp` ou `telefone_celular` consultado novamente no cadastro do IXC, validado para celular BR e mostrado mascarado na confirmação. Um celular cadastrado não significa consentimento: o operador deve ter autorização do cliente e confirmar antes de enviar.
+- O envio não é disparado automaticamente ao pagar nem ao consultar CPF. O operador solicita e confirma.
+- Envio de boas-vindas exige novo cadastro confirmado pelo IXC (data nos últimos `META_NEW_CLIENT_MAX_DAYS`; máximo 90 dias) e só pode ser solicitado uma vez por cliente; confirmação PIX uma vez por fatura. Deduplicação persistente por hash HMAC no SQLite `/data` (volume Docker).
+- Em caso de timeout/resultado incerto da Meta, o evento fica em revisão para evitar segundo envio involuntário. Verifique o WhatsApp Manager antes de repetir. Um HTTP 200 com `wamid` informa **aceitação pela Meta**, não entrega; status de entrega requer webhooks Meta (etapa posterior).
+- Sem token e templates aprovados o backend continua atendendo faturas/PIX, mas os botões Meta ficam indisponíveis. `GET /version` passa a retornar `0.8.0` após atualizar o Docker.
+- Mensagens WhatsApp Meta podem ter custos. Exibir somente dados do cliente autenticado na sessão supervisionada; para autoatendimento público, implementar verificação independente do titular (OTP ou equivalente).
