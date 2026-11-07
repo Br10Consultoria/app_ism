@@ -166,13 +166,16 @@ class IXC:
         except (httpx.HTTPError, ValueError) as exc:
             raise IXCError("IXC indisponível ou retornou formato inválido") from exc
 
-    async def list_records(self, endpoint, field, value, limit=50):
+    async def list_records(self, endpoint, field, value, limit=50,
+                           sortname=None, sortorder="asc"):
         # Alguns servidores IXC exigem GET com corpo JSON.
+        if sortname is None:
+            sortname = "fn_areceber.data_vencimento" if endpoint == "fn_areceber" else "cliente.id"
         result = await self.request(endpoint, {
             "qtype": field, "query": str(value), "oper": "=",
             "page": "1", "rp": str(limit),
-            "sortname": "fn_areceber.data_vencimento" if endpoint == "fn_areceber" else "cliente.id",
-            "sortorder": "asc",
+            "sortname": sortname,
+            "sortorder": sortorder,
         })
         if not isinstance(result, dict):
             raise IXCError("IXC: lista inválida")
@@ -200,6 +203,14 @@ class IXC:
                 continue
             result.append(row)
         return result
+
+    async def recent_customer_invoices(self, customer_id):
+        # Lista os 100 títulos mais recentes (não apenas abertos).
+        # Filtro de pagamento confirmado e titularidade acontece no backend.
+        return await self.list_records(
+            "fn_areceber", "fn_areceber.id_cliente", customer_id, 100,
+            sortname="fn_areceber.id", sortorder="desc"
+        )
 
     async def invoice(self, id_):
         found = await self.list_records("fn_areceber", "fn_areceber.id", id_, 1)
