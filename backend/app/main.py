@@ -19,7 +19,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .ixc import IXC, IXCError, digits, valid_cpf, valid_document
+from .ixc import IXC, IXCError, digits, valid_cpf, valid_document, format_document, pick
 from .pix_confirmation import verify_pix_receipt
 
 app = FastAPI(title="ISM Telecom — API do Terminal", docs_url=None, redoc_url=None)
@@ -111,7 +111,15 @@ async def health():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.6.0", "sessao_segundos": 60}
+    return {"app": "ISM Telecom", "versao": "0.7.0", "sessao_segundos": 60}
+
+
+@app.post("/api/v1/sessao/renovar",
+          dependencies=[Depends(require_terminal), Depends(throttle)])
+async def renovar_sessao(body: SessionRequest):
+    """Renova por mais 60s somente mediante acao do operador e token ainda valido."""
+    client_id = read_session(body.session)
+    return {"session": create_session(client_id), "sessao_segundos": 60}
 
 
 @app.post("/api/v1/faturas", dependencies=[Depends(require_terminal), Depends(throttle)])
@@ -128,7 +136,14 @@ async def faturas(body: Lookup):
         if not client_id.isdigit():
             raise IXCError("Identificador de cliente inválido")
         invoices = await ixc.open_invoices(client_id)
+        # Somente dados do cliente que teve o documento validado na consulta.
+        # Nunca retornar os campos bancarios, tokens ou endereco do cadastro IXC.
+        customer_name = pick(client, ("razao", "nome", "nome_razao", "fantasia"))
         return {"session": create_session(client_id),
+                "cliente": {
+                    "nome": customer_name[:100] or "Nome não informado pelo IXC",
+                    "cpf": format_document(body.cpf)
+                },
                 "faturas": [make_invoice(row) for row in invoices],
                 "mensagem": "" if invoices else "Nenhuma cobrança em aberto"}
     except IXCError:
