@@ -57,13 +57,14 @@ def save_interest(data):
         with conn:
             conn.execute("BEGIN IMMEDIATE")
             prev = conn.execute(
-                "SELECT protocolo, estado FROM interessados "
+                "SELECT protocolo, estado, canal FROM interessados "
                 "WHERE cpf = ? AND telefone = ? AND criado_em >= ? "
                 "ORDER BY criado_em DESC LIMIT 1",
                 (data["cpf"], data["telefone"], timestamp - 3600)
             ).fetchone()
             if prev:
-                return {"protocolo": prev[0], "estado": prev[1], "novo": False}
+                return {"protocolo": prev[0], "estado": prev[1],
+                        "canal": prev[2], "novo": False}
             protocol = uuid.uuid4().hex[:12].upper()
             conn.execute(
                 "INSERT INTO interessados "
@@ -72,7 +73,8 @@ def save_interest(data):
                 (protocol, timestamp, data["cpf"], data["telefone"],
                  data["nome"], data["id_cliente"], data["tecnico"])
             )
-            return {"protocolo": protocol, "estado": "pendente", "novo": True}
+            return {"protocolo": protocol, "estado": "pendente",
+                    "canal": "", "novo": True}
     finally:
         conn.close()
 
