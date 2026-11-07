@@ -20,9 +20,8 @@ jobs:
   android:
     runs-on: ubuntu-latest
     env:
-      # Somente na execucao manual. Em push/PR, APK segue sem acesso real.
+      # URL fixa do backend. A chave nunca e embutida no APK.
       ORG_GRADLE_PROJECT_ismBackendUrl: ${{ github.event_name == 'workflow_dispatch' && 'https://app.ismtelecom.com.br' || '' }}
-      ORG_GRADLE_PROJECT_ismTerminalKey: ${{ github.event_name == 'workflow_dispatch' && secrets.ISM_TERMINAL_KEY || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -37,19 +36,11 @@ jobs:
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
           test -n "$SDKMANAGER"
           "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
-      - name: Validar configuracao de homologacao
-        if: github.event_name == 'workflow_dispatch'
-        shell: bash
-        run: |
-          if [ "${#ORG_GRADLE_PROJECT_ismTerminalKey}" -lt 32 ]; then
-            echo "Configure o segredo ISM_TERMINAL_KEY (minimo 32 caracteres) em Settings > Secrets and variables > Actions."
-            exit 1
-          fi
       - name: Ativar AndroidX no CI (sem gravar segredos)
         run: echo "android.useAndroidX=true" >> android/gradle.properties
       - run: gradle -p android :app:assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event_name == 'workflow_dispatch' && 'ism-telecom-homologacao-apk' || 'ism-telecom-debug-apk' }}
+          name: ism-telecom-v0.9-ativacao-unica-apk
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 14
