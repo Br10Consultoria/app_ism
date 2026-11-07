@@ -42,7 +42,7 @@ def phone_mask(number):
 def customer_name(customer):
     name = pick(customer, ("razao", "nome", "nome_razao", "fantasia"))
     # Meta template parameters must not contain control chars or newlines.
-    name = re.sub(r"\\s+", " ", name).strip()
+    name = re.sub(r"\s+", " ", name).strip()
     return name[:80] if name else ""
 
 
@@ -101,7 +101,7 @@ def _config(kind):
     name = os.getenv(template, "").strip()
     phone_id = os.getenv("META_WHATSAPP_PHONE_NUMBER_ID", "").strip()
     token = os.getenv("META_WHATSAPP_ACCESS_TOKEN", "").strip()
-    if not re.fullmatch(r"v[0-9]{1,2}\\.[0-9]+", version):
+    if not re.fullmatch(r"v[0-9]{1,2}\.[0-9]+", version):
         raise WhatsAppError("Versão da API Meta inválida", 503)
     if not re.fullmatch(r"[a-z][a-z0-9_]{0,511}", name):
         raise WhatsAppError("Nome de template Meta inválido", 503)
@@ -117,7 +117,7 @@ async def send_template(kind, phone, parameters):
         raise WhatsAppError("Telefone celular WhatsApp inválido no IXC", 422)
     values = []
     for value in parameters:
-        value = re.sub(r"[\\r\\n\\t]+", " ", str(value)).strip()
+        value = re.sub(r"[\r\n\t]+", " ", str(value)).strip()
         if not value or len(value) > 200:
             raise WhatsAppError("Parâmetro do template inválido", 422)
         values.append({"type": "text", "text": value})
