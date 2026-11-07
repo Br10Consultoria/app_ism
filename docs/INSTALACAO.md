@@ -157,3 +157,62 @@ As categorias Utility/Marketing são definidas e validadas pela Meta; evite prom
 - Em caso de timeout/resultado incerto da Meta, o evento fica em revisão para evitar segundo envio involuntário. Verifique o WhatsApp Manager antes de repetir. Um HTTP 200 com `wamid` informa **aceitação pela Meta**, não entrega; status de entrega requer webhooks Meta (etapa posterior).
 - Sem token e templates aprovados o backend continua atendendo faturas/PIX, mas os botões Meta ficam indisponíveis. `GET /version` passa a retornar `0.8.0` após atualizar o Docker.
 - Mensagens WhatsApp Meta podem ter custos. Exibir somente dados do cliente autenticado na sessão supervisionada; para autoatendimento público, implementar verificação independente do titular (OTP ou equivalente).
+
+## ISM v0.9 — instalador de testes, ativação única e compatibilidade Getnet/Gertec
+
+- **APK Android padrão**: compatível em requisitos de SO com a Gertec GPOS780 (Android 11, minSdk do aplicativo é 26/Android 8). A instalação física nas maquininhas **Getnet de produção** depende da certificação, assinatura e distribuição autorizadas pela adquirente. Debug APK serve para aparelhos Android de teste e terminais de desenvolvimento; Getnet produtiva pode bloquear sideload/USB.
+- A primeira abertura do aplicativo sem chave exibe automaticamente **Ativar terminal ISM**. Técnico autorizado insere `TERMINAL_KEY` e o Android faz `POST /api/v1/terminal/validar` autenticado no backend antes de salvar. Uma chave errada é rejeitada e não fica armazenada.
+- Após ativar, a chave é mantida no Android Keystore, **não é embutida no APK**, e a tela de configuração/desvinculação **não aparece** novamente. O app não expõe API de alteração da chave. Para reativar em laboratório, administrador pode apagar dados do app nas configurações do Android e ativar de novo; isso não é proteção contra quem administra o sistema operacional.
+- A validação de chave precisa do backend **v0.9** instalado antes do novo APK: `curl -fsS https://app.ismtelecom.com.br/version` retorna `versao=0.9.0`. `/api/v1/terminal/validar` exige a chave; não expõe clientes nem dados.
+- Artefato GitHub Actions: `ism-telecom-v0.9-ativacao-unica-apk` (debug). Nem mesmo `workflow_dispatch` aceita chave por variável de compilação; `TERMINAL_KEY` vem da digitação protegida na primeira abertura.
+- As opções de WhatsApp Cloud API ficam **inativas até configurar token, número remetente e modelos de mensagem aprovados** no servidor. A GPOS780 não precisa ter WhatsApp instalado. O chip fornece acesso à internet; o remetente é o WhatsApp Business da empresa.
+- O documento GETNET/Software Express que apresenta DTE/X25 e módulo de TEF descreve conexão **de pagamentos eletrônicos por adquirente**, e não o mecanismo necessário para a consulta PIX no IXC nem WhatsApp Cloud API.
+- Para equipe de homologação: distribuir somente a operadores autorizados, sem publicar `TERMINAL_KEY` em grupos, APKs ou screenshots. Esta primeira fase possui chave compartilhada entre terminais e CPF sem verificação adicional; **não colocar em autoatendimento público**. Para escala de produção, planejar cadastro por aparelho, revogação individual, autenticação do assinante e assinatura de distribuição.
+
+## Integração Opa! Suite via API (ISM, v0.9)
+
+A ISM já utiliza Opa! Suite como WhatsApp Business integrado ao IXC. **Use o mesmo canal existente** em vez de registrar diretamente o número na Meta. A API externa Opa usa autorização `Bearer`, configurada em um usuário dedicado com grupo de permissões API. O canal e os modelos de mensagem devem estar ativos/aprovados e com autorização de envio. Consulte:
+- https://central-opasuite.ixcsoft.com.br/documentacao/api/api-opa%21-suite
+- https://api.opasuite.com.br/
+- https://wiki-erp.ixcsoft.com.br/documentacao/menu-configuracoes/integracoes/integracoes-omnichannel/integracao-omnichannel---opa-suite.html
+
+O endpoint documentado de envio proativo de modelo é `POST /api/v1/template/send`. O backend monta o corpo sem aceitar canal, template, destinatário ou texto vindos do Android:
+
+```json
+{
+  "contato": {"canalCliente": "+5571999999999"},
+  "template": {
+    "_id": "ID_DO_TEMPLATE_APROVADO",
+    "variaveis": ["Nome", "33"]
+  },
+  "canal": "ID_DO_CANAL_WHATSAPP"
+}
+```
+
+**Configure no arquivo privado `backend/.env` do Ubuntu:**
+
+```dotenv
+WHATSAPP_PROVIDER=opa
+OPA_BASE_URL=https://DOMINIO-DA-INSTALACAO-OPA
+OPA_API_TOKEN=TOKEN_DO_USUARIO_DE_API
+OPA_CHANNEL_ID=ID_DO_CANAL_WHATSAPP
+OPA_TEMPLATE_WELCOME_ID=ID_DO_MODELO_BOAS_VINDAS
+OPA_TEMPLATE_PIX_ID=ID_DO_MODELO_PIX_RECEBIDO
+WHATSAPP_OUTBOX_DB=/data/whatsapp_outbox.db
+META_NEW_CLIENT_MAX_DAYS=30
+```
+
+O Opa! Suite usa **IDs de modelo e canal** (não apenas o nome textual). Localize os IDs no painel ou pelos endpoints `GET /api/v1/canal-comunicacao/` e `GET /api/v1/canal-comunicacao/{id}/template`. Não enviar token nem dados de assinantes ao ChatGPT.
+
+- Modelo de boas-vindas: valores na ordem `[primeiro_nome, id_cliente]`.
+- Modelo PIX: valores `[primeiro_nome, valor_recebido, numero_fatura, data_pagamento]`.
+- Formatos e quantidades de variáveis precisam corresponder exatamente aos modelos cadastrados no Opa.
+- Destinatário sempre reconsultado do cadastro IXC no backend; o Android apenas autoriza solicitação mediante confirmação de consentimento.
+- O Opa! Suite retorna `status=success` com `data.messageSentId`. Isso indica **envio solicitado/aceito**, não que a Meta entregou ao telefone; a entrega deve ser conferida no histórico/status do Opa.
+- A versão v0.9 conserva suporte à integração direta Meta para outros ambientes, mas com `WHATSAPP_PROVIDER=opa` **o fluxo usa somente o Opa! Suite**.
+- Mensagem fora da janela WhatsApp de 24h exige modelo aprovado; o Opa! Suite gerencia o canal oficial.
+- No backend, a deduplicação é gravada no volume `/data` em SQLite. Não publica número completo nem token nas respostas.
+- O endpoint de texto livre `POST /api/v1/atendimento/mensagem/send` requer `customerServiceId` de atendimento existente; não foi escolhido para os disparos de boas-vindas.
+- Não é necessário aplicativo WhatsApp na maquininha: o chip fornece conectividade para falar via HTTPS com `app.ismtelecom.com.br`, que conversa com o Opa.
+
+**Pré-requisito para distribuir:** atualizar backend com `docker compose up -d --build` e validar `GET /version = 0.9.0`. A instalação no GPOS780 da Getnet pode exigir autorização/assinatura da adquirente, independentemente da compatibilidade Android. APK debug serve para Android normal e terminais de desenvolvimento/homologação.

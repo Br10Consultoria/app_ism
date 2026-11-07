@@ -21,9 +21,9 @@ from pydantic import BaseModel, Field
 
 from .ixc import IXC, IXCError, digits, valid_cpf, valid_document, format_document, pick
 from .pix_confirmation import verify_pix_receipt
-from .whatsapp_meta import (
+from .whatsapp_provider import (
     WhatsAppError, customer_phone, phone_mask, first_name, new_customer,
-    configured as meta_configured, send_once
+    configured as whatsapp_configured, send_once
 )
 
 app = FastAPI(title="ISM Telecom — API do Terminal", docs_url=None, redoc_url=None)
@@ -120,10 +120,17 @@ async def health():
     return {"status": "ok"}
 
 
+@app.post("/api/v1/terminal/validar",
+          dependencies=[Depends(require_terminal), Depends(throttle)])
+async def validar_terminal():
+    """Valida a chave do terminal sem buscar nem expor dados de assinantes."""
+    return {"autorizado": True}
+
+
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.8.0", "sessao_segundos": 60}
+    return {"app": "ISM Telecom", "versao": "0.9.0", "sessao_segundos": 60}
 
 
 @app.post("/api/v1/sessao/renovar",
@@ -160,10 +167,10 @@ async def faturas(body: Lookup):
                 "whatsapp": {
                     "destinatario_mascarado": phone_mask(cellphone),
                     "boas_vindas_disponivel": bool(
-                        cellphone and new_customer(client) and meta_configured("boas_vindas")
+                        cellphone and new_customer(client) and whatsapp_configured("boas_vindas")
                     ),
                     "confirmacao_pix_disponivel": bool(
-                        cellphone and meta_configured("pix")
+                        cellphone and whatsapp_configured("pix")
                     )
                 },
                 "faturas": [make_invoice(row) for row in invoices],

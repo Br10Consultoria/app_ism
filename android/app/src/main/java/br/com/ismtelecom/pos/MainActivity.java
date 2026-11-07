@@ -134,7 +134,8 @@ public class MainActivity extends Activity {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-        showHome();
+        if (terminalConfigured()) showHome();
+        else showTerminalSetup();
     }
 
     private int dp(float v) {
@@ -342,10 +343,12 @@ public class MainActivity extends Activity {
                 .show();
     }
 
+    private boolean terminalConfigured() {
+        return TerminalKeyStore.read(this).length() >= 32;
+    }
+
     private String terminalKey() {
-        String compiled = BuildConfig.TERMINAL_KEY;
-        return compiled != null && compiled.length() >= 32
-                ? compiled : TerminalKeyStore.read(this);
+        return TerminalKeyStore.read(this);
     }
 
     private String apiBase() {
@@ -353,48 +356,116 @@ public class MainActivity extends Activity {
                 ? BuildConfig.API_BASE : "https://app.ismtelecom.com.br";
     }
 
-    /** Pareamento de homologação: chave local, não é credencial do IXC. */
+    /**
+     * Ativação única para homologação supervisionada. Nunca embutir TERMINAL_KEY
+     * no APK, nem permitir edição pelo menu depois de ativado.
+     */
     private void showTerminalSetup() {
+        if (terminalConfigured()) {
+            showHome();
+            return;
+        }
         resetSession();
         closePdf();
         screenType = "setup";
-        initScreen("Configurar terminal",
-                "Aponte a maquininha para a API ISM. Informe a chave TERMINAL_KEY do servidor, nunca o token do IXC.", true);
+        initScreen("Ativar terminal ISM",
+                "Configuração única. Informe a chave de terminal fornecida pelo administrador ISM.",
+                false);
         content.addView(label("Servidor: " + apiBase(), 13, NAVY, true),
                 margins(-1, -2, 18));
-        EditText credential = field("Chave do terminal", 
+        EditText credential = field("Chave de ativação do terminal",
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         credential.setSelectAllOnFocus(true);
-        content.addView(label("A chave deve ter no mínimo 32 caracteres. "
-                        + "Ela ficará cifrada no armazenamento privado do Android.",
-                12, MUTED, false), margins(-1, -2, 14));
+        content.addView(label("A chave será conferida pelo servidor antes de ser salva. " +
+                        "Depois de ativado, o campo não será exibido novamente no aplicativo.",
+                12, MUTED, false), margins(-1, -2, 16));
 
-        primary("Salvar configuração", v -> {
-            String key = credential.getText().toString().trim();
-            if (key.length() < 32 || key.length() > 512) {
-                dialog("A chave deve ter entre 32 e 512 caracteres."); return;
+        Button activate = button("Ativar maquininha", CYAN, true);
+        activate.setOnClickListener(v -> {
+            if (loading || terminalConfigured()) return;
+            String candidate = credential.getText().toString().trim();
+            if (candidate.length() < 32 || candidate.length() > 512) {
+                dialog("A chave de ativação deve ter entre 32 e 512 caracteres.");
+                return;
             }
-            try {
-                TerminalKeyStore.save(this, key);
-                credential.setText("");
-                showHome();
-                dialog("Terminal configurado. Faça uma consulta para validar a autenticação.");
-            } catch (Exception ex) {
-                dialog("Não foi possível salvar a configuração neste Android.");
-            }
+            hideKeyboard(credential);
+            validateAndSaveTerminalKey(candidate, activate, credential);
         });
+        content.addView(activate, margins(-1, dp(54), 8));
+    }
 
-        Button forget = button("Apagar chave salva", RED, false);
-        forget.setOnClickListener(v -> new AlertDialog.Builder(this)
-                .setTitle("Desvincular terminal?")
-                .setMessage("A maquininha precisará de uma chave válida para novas consultas.")
-                .setNegativeButton("Cancelar", (d, w) -> {})
-                .setPositiveButton("Desvincular", (d, w) -> {
-                    TerminalKeyStore.clear(this);
+    private void validateAndSaveTerminalKey(String candidate, Button activate, EditText entry) {
+        if (loading) return;
+        loading = true;
+        activate.setEnabled(false);
+        final int epoch = requestEpoch;
+        final String url = apiBase();
+        ProgressBar progress = new ProgressBar(this);
+        content.addView(progress, margins(-1, dp(38), 10));
+        executor.execute(() -> {
+            HttpURLConnection connection = null;
+            boolean authorized = false;
+            String failure = "Não foi possível validar a chave de terminal. Confira a rede e a API ISM.";
+            try {
+                connection = (HttpURLConnection) new URL(
+                        url.replaceAll("/+$", "") + "/api/v1/terminal/validar").openConnection();
+                connection.setRequestMethod("POST");
+                connection.setConnectTimeout(10000);
+                connection.setReadTimeout(15000);
+                connection.setDoOutput(true);
+                connection.setRequestProperty("X-Terminal-Key", candidate);
+                connection.setRequestProperty("Content-Type", "application/json");
+                try (OutputStream out = connection.getOutputStream()) {
+                    out.write("{}".getBytes(StandardCharsets.UTF_8));
+                }
+                int status = connection.getResponseCode();
+                if (status == 200) {
+                    try (InputStream input = connection.getInputStream()) {
+                        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                        byte[] buffer = new byte[1024];
+                        int n;
+                        while ((n = input.read(buffer)) != -1) {
+                            bytes.write(buffer, 0, n);
+                            if (bytes.size() > 4096) throw new IOException("Resposta muito grande");
+                        }
+                        authorized = new JSONObject(bytes.toString("UTF-8"))
+                                .optBoolean("autorizado", false);
+                    }
+                } else if (status == 401) {
+                    failure = "Chave recusada pelo servidor. Confira a TERMINAL_KEY.";
+                } else if (status == 404) {
+                    failure = "A versão do servidor é antiga. Atualize o backend ISM antes de ativar.";
+                } else {
+                    failure = "Servidor não autorizou o terminal (HTTP " + status + ").";
+                }
+            } catch (Exception error) {
+                failure = "Falha de conexão. Verifique o domínio, internet e servidor ISM.";
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+
+            final boolean accepted = authorized;
+            final String errorText = failure;
+            ui.post(() -> {
+                if (epoch != requestEpoch) return;
+                loading = false;
+                removeProgress(progress);
+                activate.setEnabled(true);
+                if (!accepted) {
+                    dialog(errorText);
+                    return;
+                }
+                try {
+                    TerminalKeyStore.save(this, candidate);
+                    if (!terminalConfigured()) throw new IOException("Falha ao ler chave cifrada");
+                    entry.setText("");
                     showHome();
-                    dialog("Chave local apagada.");
-                }).show());
-        content.addView(forget, margins(-1, dp(48), 12));
+                    dialog("Terminal ISM ativado. A configuração está bloqueada neste aparelho.");
+                } catch (IOException error) {
+                    dialog("Não foi possível guardar a chave de forma protegida no Android.");
+                }
+            });
+        });
     }
 
     private EditText field(String hint, int inputType) {
@@ -453,6 +524,10 @@ public class MainActivity extends Activity {
     }
 
     private void showHome() {
+        if (!terminalConfigured()) {
+            showTerminalSetup();
+            return;
+        }
         screenType = "home";
         resetSession();
         closePdf();
@@ -473,16 +548,9 @@ public class MainActivity extends Activity {
         warning.setGravity(Gravity.CENTER);
         content.addView(warning, margins(-1, -2, 20));
 
-        Button config = button("Configurar terminal", NAVY, false);
-        config.setTextSize(13);
-        config.setOnClickListener(v -> showTerminalSetup());
-        content.addView(config, margins(-1, dp(46), 10));
-
-        TextView status = label(
-                terminalKey().length() >= 32 ? "Chave de terminal salva" : "Terminal não configurado",
-                11, MUTED, false);
-        status.setGravity(Gravity.CENTER);
-        content.addView(status, margins(-1, -2, 8));
+        TextView provisioned = label("Terminal autorizado para consultas ISM", 11, MUTED, false);
+        provisioned.setGravity(Gravity.CENTER);
+        content.addView(provisioned, margins(-1, -2, 8));
     }
 
     private void showLookup() {
@@ -1004,13 +1072,15 @@ public class MainActivity extends Activity {
 
     private void showMetaSendStatus(JSONObject result) {
         if (result.optBoolean("solicitado", false)) {
-            dialog("A Meta aceitou o envio para o WhatsApp " +
+            String provider = "aceito_opa".equals(result.optString("situacao"))
+                    ? "Opa! Suite" : "Meta";
+            dialog(provider + " aceitou o pedido para o WhatsApp " +
                     result.optString("destinatario_mascarado") +
-                    ". A entrega ao cliente ainda precisa ser confirmada na plataforma Meta.");
+                    ". O envio não significa entrega; confirme o status na plataforma.");
         } else {
             dialog(result.optString("mensagem",
                     "Essa mensagem já foi solicitada anteriormente. " +
-                    "Consulte o histórico no WhatsApp Business Manager."));
+                    "Consulte o histórico no sistema de atendimento WhatsApp."));
         }
     }
 

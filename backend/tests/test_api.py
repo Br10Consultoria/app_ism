@@ -276,7 +276,7 @@ def test_backend_version_and_short_session_ttl():
     version = client.get("/version")
     assert version.status_code == 200
     assert version.json() == {
-        "app": "ISM Telecom", "versao": "0.8.0", "sessao_segundos": 60
+        "app": "ISM Telecom", "versao": "0.9.0", "sessao_segundos": 60
     }
 
     token = create_session("123")
@@ -355,3 +355,14 @@ def test_customer_name_fallback_uses_ixc_nome(monkeypatch):
                            headers=headers, json={"cpf": "52998224725"})
     assert response.status_code == 200
     assert response.json()["cliente"]["nome"] == "Cliente IXC"
+
+
+
+def test_terminal_activation_validates_key_without_sensitive_data():
+    good = client.post("/api/v1/terminal/validar", headers=headers, json={})
+    assert good.status_code == 200
+    assert good.json() == {"autorizado": True}
+    denied = client.post("/api/v1/terminal/validar",
+                         headers={"X-Terminal-Key": "invalid"}, json={})
+    assert denied.status_code == 401
+    assert "terminal" not in good.text.lower() or "autorizado" in good.text.lower()
