@@ -38,14 +38,35 @@ def test_lead_requires_consent():
     assert r.status_code == 422
 
 
-def test_no_receiver_fails_not_success():
-    for name in ("COMMERCIAL_WEBHOOK_URL", "SMTP_HOST", "COMMERCIAL_TO"):
-        os.environ.pop(name, None)
-    r = client.post("/api/v1/interessados", headers=headers, json={
-        "cpf": "52998224725", "telefone": "71999998888", "tecnico": "Técnico A",
+def test_no_receiver_saves_contact_as_pending_not_success(monkeypatch, tmp_path):
+    for name in ("COMMERCIAL_WEBHOOK_URL", "SMTP_HOST", "COMMERCIAL_TO",
+                 "OPA_TEMPLATE_LEAD_ID", "OPA_COMMERCIAL_PHONE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LEADS_DB", str(tmp_path / "leads.db"))
+    payload = {
+        "nome": "Cliente Teste", "cpf": "52998224725",
+        "telefone": "71999998888", "tecnico": "Técnico A",
         "consentimento": True
-    })
-    assert r.status_code == 503
+    }
+    r = client.post("/api/v1/interessados", headers=headers, json=payload)
+    assert r.status_code == 200, r.text
+    assert r.json()["enviado"] is False
+    assert r.json()["situacao"] == "pendente"
+    assert len(r.json()["protocolo"]) == 12
+    assert "52998224725" not in r.text
+    assert "71999998888" not in r.text
+
+    from app.commercial_leads import list_leads
+    saved = list_leads("pendente")
+    assert len(saved) == 1
+    assert saved[0]["cpf"] == payload["cpf"]
+    assert saved[0]["telefone"] == payload["telefone"]
+
+    # Reenvio acidental em menos de 1h usa o mesmo protocolo e não duplica.
+    again = client.post("/api/v1/interessados", headers=headers, json=payload)
+    assert again.status_code == 200
+    assert again.json()["protocolo"] == r.json()["protocolo"]
+    assert len(list_leads("pendente")) == 1
 
 
 def test_safe_health():
@@ -276,7 +297,7 @@ def test_backend_version_and_short_session_ttl():
     version = client.get("/version")
     assert version.status_code == 200
     assert version.json() == {
-        "app": "ISM Telecom", "versao": "0.9.0", "sessao_segundos": 60
+        "app": "ISM Telecom", "versao": "0.10.0", "sessao_segundos": 60
     }
 
     token = create_session("123")
