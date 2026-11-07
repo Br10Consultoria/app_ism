@@ -589,6 +589,19 @@ public class MainActivity extends Activity {
                     "Mostramos até 10 PIX confirmados entre os 100 títulos mais recentes. " +
                     "Antes de emitir a confirmação o IXC será consultado novamente.",
                     12, MUTED, false), margins(-1, -2, 15));
+
+            content.addView(label("Sabe o número de uma fatura PIX já paga?", 14, NAVY, true),
+                    margins(-1, -2, 8));
+            EditText invoiceNumber = field("Número da fatura no IXC", InputType.TYPE_CLASS_NUMBER);
+            primary("Verificar pelo número da fatura", v -> {
+                String invoiceId = digits(invoiceNumber.getText().toString());
+                if (invoiceId.isEmpty() || invoiceId.length() > 15) {
+                    dialog("Informe um número de fatura válido do IXC.");
+                    return;
+                }
+                hideKeyboard(invoiceNumber);
+                checkPixPayment(invoiceId);
+            });
             primary("Voltar às faturas", v -> {
                 if (isSessionValid()) renderInvoices();
                 else showLookup();
