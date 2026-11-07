@@ -1370,7 +1370,7 @@ public class MainActivity extends Activity {
                 content.addView(label(response.optString("mensagem",
                         "Solicitação registrada no servidor ISM."),
                         14, MUTED, false), margins(-1, -2, 16));
-                primary("Voltar ao início", v -> showHome());
+                primary("Voltar ao início", ignoredButton -> showHome());
             });
         });
     }
