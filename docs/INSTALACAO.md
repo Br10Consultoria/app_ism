@@ -260,3 +260,35 @@ docker compose exec -T api python -m app.commercial_leads encaminhar
 Não execute `encaminhar` antes de ter um modelo próprio aprovado e destinatário autorizado. Verifique casos `revisar` diretamente no Opa para evitar mensagens duplicadas. A confirmação de cadastro comercial não depende do modelo PIX recebido nem altera a integração de cobranças.
 
 **Para atualizar:** `git switch main && git pull --ff-only origin main`, depois `cd backend && docker compose up -d --build`. O endpoint `GET /version` deve mostrar `0.10.0`. Instale o APK v0.10 se desejar que o Android mostre a situação correta e o protocolo.
+
+## ISM v0.11 — Quero contratar: iniciar conversa com interessado pelo Opa
+
+A ISM utiliza o canal WhatsApp Cloud ativo `679cc77501d3afa6ad0a1178`. Foi identificado o modelo já existente `iniciar_atendimento2`, ID `6aa3fcaad95fdf7490e33108`, com duas variáveis, conforme a API da instalação consultada na homologação:
+
+> Olá {{nome_cliente}}! Somos da {{nome_empresa}} e ficamos felizes em lhe atender. Podemos iniciar o atendimento agora?
+
+**Este é o texto do modelo existente.** Não substitui o texto por "Aguarde" nem altera template aprovado unilateralmente. O status de aprovação real precisa ser confirmado no painel Opa. Se a ISM quiser outra redação, criar ou alterar modelo para análise/aprovação.
+
+Para habilitar a opção **no backend**, após homologar permissões e destinatário autorizado:
+
+```dotenv
+WHATSAPP_PROVIDER=opa
+OPA_CHANNEL_ID=679cc77501d3afa6ad0a1178
+OPA_TEMPLATE_PROSPECT_ID=6aa3fcaad95fdf7490e33108
+OPA_PROSPECT_WHATSAPP_ENABLED=true
+```
+
+Manter o `OPA_BASE_URL`, `OPA_API_TOKEN`, as configurações do IXC e as chaves de terminal que já funcionam. Sem habilitar `OPA_PROSPECT_WHATSAPP_ENABLED=true`, o cadastro comercial continua sendo salvo como pendente, como na v0.10. Este controle evita envio real involuntário na atualização.
+
+Fluxo:
+1. Interessado informa nome, CPF, **celular WhatsApp (DDD+9 dígitos)** e técnico na maquininha; confirma autorização explícita para a ISM entrar em contato por WhatsApp ou telefone.
+2. Backend salva o cadastro `/data/leads.db` com protocolo e impede duplicações no intervalo de uma hora.
+3. Se integração configurada, API Opa recebe `POST /api/v1/template/send`, com número do interessado obtido do formulário consentido, o modelo acima, as variáveis `[primeiro_nome, "ISM TELECOM"]` e `openCustomerService: true`.
+4. Se a API retornar aceitação, aplicativo mostra **Interesse registrado** e informa que a solicitação de mensagem foi aceita. **Entrega e roteamento ao departamento comercial ainda precisam ser confirmados no Opa**. Sem canal configurado, aplicativo mostra **Contato registrado — pendente**, preservando protocolo.
+5. Se houver atendimento já ativo, o Opa pode bloquear o modelo por padrão: confira o histórico antes de repetir, para evitar duplicação.
+
+Esta opção não usa WhatsApp instalado na maquininha e não requer credenciais Meta nela. O número do remetente é o canal oficial Opa, não o chip da Gertec. Se desejar que o atendente comercial assuma essas conversas, configurar fluxo/roteamento e departamentos no Opa Suite; `openCustomerService` **não garante a escolha do departamento**.
+
+A API do Opa documenta `openCustomerService: true` no envio de template: https://api.opasuite.com.br/. Configure o modelo para a finalidade correta, consulte status e permissões antes do primeiro teste real. Não use `data_cake` (boas-vindas a assinantes) para interessados.
+
+Atualização: `git switch main && git pull --ff-only origin main`; `cd backend && docker compose up -d --build`; conferir `GET /version = 0.11.0`; instalar APK v0.11.
