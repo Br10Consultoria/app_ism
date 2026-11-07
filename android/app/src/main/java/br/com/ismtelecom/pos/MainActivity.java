@@ -1072,13 +1072,15 @@ public class MainActivity extends Activity {
 
     private void showMetaSendStatus(JSONObject result) {
         if (result.optBoolean("solicitado", false)) {
-            dialog("A Meta aceitou o envio para o WhatsApp " +
+            String provider = "aceito_opa".equals(result.optString("situacao"))
+                    ? "Opa! Suite" : "Meta";
+            dialog(provider + " aceitou o pedido para o WhatsApp " +
                     result.optString("destinatario_mascarado") +
-                    ". A entrega ao cliente ainda precisa ser confirmada na plataforma Meta.");
+                    ". O envio não significa entrega; confirme o status na plataforma.");
         } else {
             dialog(result.optString("mensagem",
                     "Essa mensagem já foi solicitada anteriormente. " +
-                    "Consulte o histórico no WhatsApp Business Manager."));
+                    "Consulte o histórico no sistema de atendimento WhatsApp."));
         }
     }
 
