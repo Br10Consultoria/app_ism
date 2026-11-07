@@ -276,7 +276,7 @@ def test_backend_version_and_short_session_ttl():
     version = client.get("/version")
     assert version.status_code == 200
     assert version.json() == {
-        "app": "ISM Telecom", "versao": "0.6.0", "sessao_segundos": 60
+        "app": "ISM Telecom", "versao": "0.7.0", "sessao_segundos": 60
     }
 
     token = create_session("123")
@@ -285,3 +285,73 @@ def test_backend_version_and_short_session_ttl():
     assert payload["id"] == "123"
     assert 59 <= payload["exp"] - int(time.time()) <= 61
     assert read_session(token) == "123"
+
+
+def test_customer_name_and_cpf_returned_only_after_valid_lookup(monkeypatch):
+    from app import main as module
+
+    class FakeIXC:
+        async def customer(self, cpf):
+            assert cpf == "52998224725"
+            return {"id": "123", "razao": "Cliente Homologacao",
+                    "cnpj_cpf": "529.982.247-25", "senha": "nao-expor",
+                    "endereco": "nao-expor"}
+        async def open_invoices(self, client_id):
+            assert client_id == "123"
+            return []
+
+    monkeypatch.setattr(module, "IXC", FakeIXC)
+    payload = {"cpf": "52998224725"}
+    assert client.post("/api/v1/faturas", json=payload).status_code == 401
+    response = client.post("/api/v1/faturas", headers=headers, json=payload)
+    assert response.status_code == 200
+    assert response.json()["cliente"] == {
+        "nome": "Cliente Homologacao", "cpf": "529.982.247-25"
+    }
+    assert response.json()["faturas"] == []
+    assert read_session(response.json()["session"]) == "123"
+    assert "nao-expor" not in response.text
+
+
+def test_session_explicit_renewal_and_auth_required():
+    url = "/api/v1/sessao/renovar"
+    original = create_session("123")
+    assert client.post(url, json={"session": original}).status_code == 401
+    response = client.post(url, headers=headers, json={"session": original})
+    assert response.status_code == 200
+    assert response.json()["sessao_segundos"] == 60
+    assert read_session(response.json()["session"]) == "123"
+    assert client.post(url, headers=headers, json={"session": "not-a-signed-token"}).status_code in (401, 422)
+
+
+def test_session_renewal_rejects_expired_token():
+    import base64
+    import hashlib
+    import hmac
+    import json
+    import time
+    from app.main import secret
+    payload = {"id": "123", "exp": int(time.time()) - 180}
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
+    signature = hmac.new(secret(), encoded.encode(), hashlib.sha256).hexdigest()
+    expired = encoded + "." + signature
+    response = client.post("/api/v1/sessao/renovar",
+                           headers=headers, json={"session": expired})
+    assert response.status_code == 401
+
+
+def test_customer_name_fallback_uses_ixc_nome(monkeypatch):
+    from app import main as module
+
+    class FakeIXC:
+        async def customer(self, document):
+            return {"id": "123", "razao": "", "nome": "Cliente IXC"}
+        async def open_invoices(self, client_id):
+            return []
+
+    monkeypatch.setattr(module, "IXC", FakeIXC)
+    response = client.post("/api/v1/faturas",
+                           headers=headers, json={"cpf": "52998224725"})
+    assert response.status_code == 200
+    assert response.json()["cliente"]["nome"] == "Cliente IXC"
