@@ -278,7 +278,7 @@ async def whatsapp_pix(invoice_id: int, body: WhatsAppRequest):
             raise HTTPException(422, "Cliente sem WhatsApp celular válido no IXC")
 
         payment_date = receipt.get("data_pagamento") or ""
-        if re.match(r"^\\d{4}-\\d{2}-\\d{2}", payment_date):
+        if re.match(r"^\d{4}-\d{2}-\d{2}", payment_date):
             payment_date = payment_date[8:10] + "/" + payment_date[5:7] + "/" + payment_date[:4]
         if not payment_date:
             payment_date = "data não informada pelo IXC"
