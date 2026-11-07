@@ -42,6 +42,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
 
@@ -120,7 +121,9 @@ public class MainActivity extends Activity {
             if (sessionFooter != null) sessionFooter.setText("Fim da sessão: " + left + " segundos");
             if (left == 0) {
                 showHome();
-                dialog("Sessão encerrada por segurança. Inicie outra consulta.");
+                Toast.makeText(MainActivity.this,
+                        "Sessão encerrada. Consulte o CPF novamente.",
+                        Toast.LENGTH_LONG).show();
             } else {
                 ui.postDelayed(this, 1000);
             }
@@ -505,6 +508,27 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void showCustomerInfo() {
+        if (!isSessionValid() || invoiceResponse == null) return;
+        JSONObject customer = invoiceResponse.optJSONObject("cliente");
+        if (customer == null) return;
+        String name = customer.optString("nome", "").trim();
+        String document = customer.optString("cpf", "").trim();
+        if (name.isEmpty() && document.isEmpty()) return;
+
+        LinearLayout details = col();
+        details.setPadding(dp(14), dp(12), dp(14), dp(12));
+        details.setBackground(shape(Color.WHITE, 12, Color.rgb(222, 233, 241)));
+        if (!name.isEmpty()) {
+            details.addView(label("Cliente: " + name, 14, NAVY, true),
+                    margins(-1, -2, 6));
+        }
+        if (!document.isEmpty()) {
+            details.addView(label("CPF/CNPJ: " + document, 13, NAVY, false));
+        }
+        content.addView(details, margins(-1, -2, 14));
+    }
+
     private void renderInvoices() {
         stopPixAutoCheck();
         screenType = "invoices";
@@ -514,6 +538,7 @@ public class MainActivity extends Activity {
         int count = invoices == null ? 0 : invoices.length();
         initScreen("Boletos e\npagamentos",
                 "Olá! Encontramos " + count + (count == 1 ? " fatura disponível." : " faturas disponíveis."), true);
+        showCustomerInfo();
 
         if (isSessionValid()) {
             primary("Consultar PIX já recebidos", v -> showPaidPixHistory());
@@ -560,6 +585,28 @@ public class MainActivity extends Activity {
     /** Permite recuperar a confirmacao mesmo após o titulo sair de faturas em aberto.
      * Uma nova consulta por CPF/CNPJ gera uma nova sessão com tempo limitado. */
     private void showPaidPixHistory() {
+        if (!isSessionValid()) {
+            showLookup();
+            dialog("Sessão expirada. Consulte o cliente novamente.");
+            return;
+        }
+        // Renovação exige toque do operador e token anterior ainda válido.
+        JSONObject request = new JSONObject();
+        try { request.put("session", session); } catch (JSONException ignored) {}
+        call("/api/v1/sessao/renovar", request, renewed -> {
+            String fresh = renewed.optString("session");
+            if (fresh.isEmpty()) {
+                showLookup();
+                dialog("Não foi possível renovar a sessão. Consulte o CPF novamente.");
+                return;
+            }
+            session = fresh;
+            startSession();
+            renderPaidPixHistory();
+        });
+    }
+
+    private void renderPaidPixHistory() {
         stopPixAutoCheck();
         if (!isSessionValid()) {
             showLookup();
@@ -572,6 +619,7 @@ public class MainActivity extends Activity {
         closePdf();
         initScreen("PIX já recebidos",
                 "Consulte uma fatura quitada por PIX sem pagar novamente.", true);
+        showCustomerInfo();
 
         content.addView(label("Número da fatura PIX paga no IXC", 14, NAVY, true),
                 margins(-1, -2, 8));
@@ -786,7 +834,25 @@ public class MainActivity extends Activity {
                     || !invoiceId.equals(pixWatchingInvoiceId))) return;
             if (result.optBoolean("confirmado", false)
                     && "confirmado".equals(result.optString("situacao"))) {
-                showPixReceipt(result);
+                // O operador tem 60 segundos novos para visualizar e compartilhar o PDF.
+                stopPixAutoCheck();
+                JSONObject renewal = new JSONObject();
+                try { renewal.put("session", session); } catch (JSONException ignored) {}
+                call("/api/v1/sessao/renovar", renewal, renewed -> {
+                    String fresh = renewed.optString("session");
+                    if (fresh.isEmpty()) {
+                        showLookup();
+                        dialog("Pagamento confirmado no IXC, mas a sessão expirou. Consulte novamente.");
+                        return;
+                    }
+                    session = fresh;
+                    startSession();
+                    showPixReceipt(result);
+                }, message -> {
+                    showLookup();
+                    dialog("PIX confirmado no IXC, mas não foi possível renovar a sessão. " +
+                            "Consulte novamente para compartilhar a confirmação.");
+                });
                 return;
             }
             String state = result.optString("situacao");
@@ -826,6 +892,7 @@ public class MainActivity extends Activity {
         screenType = "receipt";
         closePdf();
         initScreen("Pagamento confirmado", "A baixa via PIX foi confirmada no IXC.", true);
+        showCustomerInfo();
         TextView success = label("✓ PIX RECEBIDO", 20, GREEN, true);
         success.setGravity(Gravity.CENTER);
         success.setPadding(dp(10), dp(20), dp(10), dp(20));
