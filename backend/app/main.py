@@ -133,7 +133,7 @@ async def validar_terminal():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.10.0", "sessao_segundos": 60}
+    return {"app": "ISM Telecom", "versao": "0.11.0", "sessao_segundos": 60}
 
 
 @app.post("/api/v1/sessao/renovar",
@@ -327,8 +327,22 @@ async def pagamento(invoice_id: int, kind: str, body: SessionRequest):
 
 
 
-def commercial_configured():
-    """Encaminhamento separado dos templates de assinantes; nunca usar boas-vindas para leads."""
+def prospect_whatsapp_configured():
+    """Opa! Suite com template próprio e opt-in administrativo explícito."""
+    return (
+        os.getenv("WHATSAPP_PROVIDER", "").strip().lower() == "opa"
+        and os.getenv("OPA_PROSPECT_WHATSAPP_ENABLED", "").strip().lower()
+            in ("true", "1", "s", "sim")
+        and whatsapp_opa.configured("prospecto")
+    )
+
+
+def commercial_configured(data=None):
+    """Preferir WhatsApp do interessado, quando opt-in da empresa e número válidos."""
+    if prospect_whatsapp_configured() and data is not None:
+        number = digits(data.get("telefone", ""))
+        if len(number) == 11 and number[2] == "9":
+            return True
     opa_ready = (
         os.getenv("WHATSAPP_PROVIDER", "").lower() == "opa"
         and os.getenv("OPA_BASE_URL", "")
@@ -345,7 +359,16 @@ def commercial_configured():
 
 
 async def send_commercial(data):
-    """Usa Opa! Suite, webhook ou SMTP; apenas confirma aceite pelo destino."""
+    """Conversa com interessado via Opa ou aviso interno via canais comerciais."""
+    number = digits(data["telefone"])
+    if prospect_whatsapp_configured() and len(number) == 11 and number[2] == "9":
+        message_id = await whatsapp_opa.send_template(
+            "prospecto", "55" + number,
+            [data["nome"].split()[0], "ISM TELECOM"],
+            open_customer_service=True,
+        )
+        return "opa_cliente", message_id
+
     if (os.getenv("WHATSAPP_PROVIDER", "").lower() == "opa"
             and os.getenv("OPA_TEMPLATE_LEAD_ID", "")
             and os.getenv("OPA_COMMERCIAL_PHONE", "")):
@@ -399,10 +422,17 @@ async def send_commercial(data):
     raise ValueError("Canal comercial não configurado")
 
 
-def lead_response(protocol, state):
+def lead_response(protocol, state, channel=""):
+    if state == "encaminhado" and channel == "opa_cliente":
+        return {
+            "enviado": True, "situacao": "mensagem_cliente", "protocolo": protocol,
+            "mensagem": "Opa! Suite aceitou a solicitação de mensagem ao interessado "
+                        "e abertura de atendimento. A entrega e o direcionamento "
+                        "ao comercial devem ser verificados no Opa! Suite."
+        }
     if state == "encaminhado":
         return {"enviado": True, "situacao": "encaminhado", "protocolo": protocol,
-                "mensagem": "Solicitação registrada e encaminhada ao comercial."}
+                "mensagem": "Solicitação registrada e aceita pelo canal comercial."}
     if state == "revisar":
         return {"enviado": False, "situacao": "revisar", "protocolo": protocol,
                 "mensagem": "Contato registrado. Confirme o encaminhamento antes de repetir."}
@@ -413,7 +443,7 @@ def lead_response(protocol, state):
 async def try_commercial_delivery(data):
     """Reutilizado pelo terminal e pelo comando administrativo de reenfileiramento."""
     protocol = data["protocolo"]
-    if not commercial_configured():
+    if not commercial_configured(data):
         return lead_response(protocol, "pendente")
     if not claim_for_send(protocol):
         return lead_response(protocol, "pendente")
@@ -425,7 +455,7 @@ async def try_commercial_delivery(data):
         set_status(protocol, "revisar", detail="Conferir histórico do canal comercial")
         return lead_response(protocol, "revisar")
     set_status(protocol, "encaminhado", channel=channel, reference=reference)
-    return lead_response(protocol, "encaminhado")
+    return lead_response(protocol, "encaminhado", channel=channel)
 
 
 @app.post("/api/v1/interessados", dependencies=[Depends(require_terminal), Depends(throttle)])
@@ -454,5 +484,6 @@ async def interessados(body: Lead):
         raise HTTPException(503, "Falha ao registrar o interessado; tente novamente")
     data["protocolo"] = saved["protocolo"]
     if not saved["novo"]:
-        return lead_response(data["protocolo"], saved["estado"])
+        return lead_response(data["protocolo"], saved["estado"],
+                             channel=saved.get("canal", ""))
     return await try_commercial_delivery(data)
