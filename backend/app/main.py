@@ -10,6 +10,7 @@ import json
 import os
 import re
 import smtplib
+import sqlite3
 import time
 import uuid
 from threading import Lock
@@ -21,6 +22,8 @@ from pydantic import BaseModel, Field
 
 from .ixc import IXC, IXCError, digits, valid_cpf, valid_document, format_document, pick
 from .pix_confirmation import verify_pix_receipt
+from .commercial_leads import save_interest, claim_for_send, set_status
+from . import whatsapp_opa
 from .whatsapp_provider import (
     WhatsAppError, customer_phone, phone_mask, first_name, new_customer,
     configured as whatsapp_configured, send_once
@@ -130,7 +133,7 @@ async def validar_terminal():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.9.0", "sessao_segundos": 60}
+    return {"app": "ISM Telecom", "versao": "0.10.0", "sessao_segundos": 60}
 
 
 @app.post("/api/v1/sessao/renovar",
@@ -324,7 +327,40 @@ async def pagamento(invoice_id: int, kind: str, body: SessionRequest):
 
 
 
+def commercial_configured():
+    """Encaminhamento separado dos templates de assinantes; nunca usar boas-vindas para leads."""
+    opa_ready = (
+        os.getenv("WHATSAPP_PROVIDER", "").lower() == "opa"
+        and os.getenv("OPA_BASE_URL", "")
+        and os.getenv("OPA_API_TOKEN", "")
+        and os.getenv("OPA_CHANNEL_ID", "")
+        and os.getenv("OPA_TEMPLATE_LEAD_ID", "")
+        and os.getenv("OPA_COMMERCIAL_PHONE", "")
+    )
+    return bool(
+        opa_ready
+        or os.getenv("COMMERCIAL_WEBHOOK_URL", "")
+        or (os.getenv("SMTP_HOST", "") and os.getenv("COMMERCIAL_TO", ""))
+    )
+
+
 async def send_commercial(data):
+    """Usa Opa! Suite, webhook ou SMTP; apenas confirma aceite pelo destino."""
+    if (os.getenv("WHATSAPP_PROVIDER", "").lower() == "opa"
+            and os.getenv("OPA_TEMPLATE_LEAD_ID", "")
+            and os.getenv("OPA_COMMERCIAL_PHONE", "")):
+        from .ixc import digits
+        # Telefone do departamento comercial cadastrado pelo administrador.
+        destination = digits(os.environ["OPA_COMMERCIAL_PHONE"])
+        if len(destination) == 11 and destination[2] == "9":
+            destination = "55" + destination
+        if len(destination) != 13 or not destination.startswith("55") or destination[4] != "9":
+            raise ValueError("OPA_COMMERCIAL_PHONE inválido")
+        message_id = await whatsapp_opa.send_template("interessados", destination, [
+            data["nome"], data["telefone"], data["tecnico"], data["protocolo"]
+        ])
+        return "opa", message_id
+
     url = os.getenv("COMMERCIAL_WEBHOOK_URL", "").strip()
     if url:
         parsed = urlparse(url)
@@ -335,7 +371,8 @@ async def send_commercial(data):
         async with httpx.AsyncClient(timeout=12, follow_redirects=False, trust_env=False) as client:
             result = await client.post(url, json=data, headers=headers)
         result.raise_for_status()
-        return
+        return "webhook", ""
+
     host, target = os.getenv("SMTP_HOST", ""), os.getenv("COMMERCIAL_TO", "")
     if host and target:
         msg = EmailMessage()
@@ -358,8 +395,37 @@ async def send_commercial(data):
                 smtp.login(os.getenv("SMTP_USER", ""), os.getenv("SMTP_PASSWORD", ""))
                 smtp.send_message(msg)
         await asyncio.to_thread(send_mail)
-        return
+        return "email", ""
     raise ValueError("Canal comercial não configurado")
+
+
+def lead_response(protocol, state):
+    if state == "encaminhado":
+        return {"enviado": True, "situacao": "encaminhado", "protocolo": protocol,
+                "mensagem": "Solicitação registrada e encaminhada ao comercial."}
+    if state == "revisar":
+        return {"enviado": False, "situacao": "revisar", "protocolo": protocol,
+                "mensagem": "Contato registrado. Confirme o encaminhamento antes de repetir."}
+    return {"enviado": False, "situacao": "pendente", "protocolo": protocol,
+            "mensagem": "Contato registrado. Encaminhamento ao comercial pendente."}
+
+
+async def try_commercial_delivery(data):
+    """Reutilizado pelo terminal e pelo comando administrativo de reenfileiramento."""
+    protocol = data["protocolo"]
+    if not commercial_configured():
+        return lead_response(protocol, "pendente")
+    if not claim_for_send(protocol):
+        return lead_response(protocol, "pendente")
+    try:
+        channel, reference = await send_commercial(data)
+    except (ValueError, OSError, smtplib.SMTPException, httpx.HTTPError,
+            whatsapp_opa.WhatsAppError):
+        # Timeouts e 5xx podem ter sido aceitos pelo destino. Não repetir no automático.
+        set_status(protocol, "revisar", detail="Conferir histórico do canal comercial")
+        return lead_response(protocol, "revisar")
+    set_status(protocol, "encaminhado", channel=channel, reference=reference)
+    return lead_response(protocol, "encaminhado")
 
 
 @app.post("/api/v1/interessados", dependencies=[Depends(require_terminal), Depends(throttle)])
@@ -369,8 +435,10 @@ async def interessados(body: Lead):
         raise HTTPException(422, "CPF ou telefone inválido")
     if not body.consentimento:
         raise HTTPException(422, "É necessário consentimento para contato")
+    if len(body.nome.strip()) < 2 or len(body.tecnico.strip()) < 2:
+        raise HTTPException(422, "Informe o nome do interessado e do técnico")
+
     data = {
-        "protocolo": uuid.uuid4().hex[:12].upper(),
         "data": datetime.now(timezone.utc).isoformat(),
         "cpf": digits(body.cpf),
         "telefone": phone,
@@ -381,8 +449,10 @@ async def interessados(body: Lead):
         "consentimento": True,
     }
     try:
-        await send_commercial(data)
-    except (ValueError, OSError, smtplib.SMTPException, httpx.HTTPError):
-        raise HTTPException(503, "Comercial indisponível; envie novamente mais tarde")
-    # Não persiste CPF/telefone no terminal ou backend depois do encaminhamento.
-    return {"enviado": True, "protocolo": data["protocolo"]}
+        saved = save_interest(data)
+    except (OSError, ValueError, sqlite3.Error):
+        raise HTTPException(503, "Falha ao registrar o interessado; tente novamente")
+    data["protocolo"] = saved["protocolo"]
+    if not saved["novo"]:
+        return lead_response(data["protocolo"], saved["estado"])
+    return await try_commercial_delivery(data)

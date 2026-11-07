@@ -15,8 +15,19 @@ from .whatsapp_meta import (
 )
 
 
+def template_env_key(kind):
+    keys = {
+        "boas_vindas": "OPA_TEMPLATE_WELCOME_ID",
+        "pix": "OPA_TEMPLATE_PIX_ID",
+        "interessados": "OPA_TEMPLATE_LEAD_ID",
+    }
+    if kind not in keys:
+        raise WhatsAppError("Tipo de mensagem Opa inválido", 422)
+    return keys[kind]
+
+
 def configured(kind):
-    key = "OPA_TEMPLATE_WELCOME_ID" if kind == "boas_vindas" else "OPA_TEMPLATE_PIX_ID"
+    key = template_env_key(kind)
     return bool(
         os.getenv("OPA_BASE_URL", "").strip()
         and os.getenv("OPA_API_TOKEN", "").strip()
@@ -36,8 +47,7 @@ def _config(kind):
     if parsed.path not in ("", "/"):
         raise WhatsAppError("OPA_BASE_URL deve conter apenas o domínio HTTPS", 503)
     channel = os.getenv("OPA_CHANNEL_ID", "").strip()
-    template_key = "OPA_TEMPLATE_WELCOME_ID" if kind == "boas_vindas" else "OPA_TEMPLATE_PIX_ID"
-    template_id = os.getenv(template_key, "").strip()
+    template_id = os.getenv(template_env_key(kind), "").strip()
     if not re.fullmatch(r"[a-zA-Z0-9]{20,40}", channel):
         raise WhatsAppError("ID de canal do Opa! Suite inválido", 503)
     if not re.fullmatch(r"[a-zA-Z0-9]{20,40}", template_id):

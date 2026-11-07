@@ -1350,8 +1350,27 @@ public class MainActivity extends Activity {
             hideKeyboard(tech);
             call("/api/v1/interessados", data, response -> {
                 screenType = "lead-confirmation";
-                initScreen("Solicitação enviada", "O contato foi encaminhado ao comercial.", true);
-                content.addView(label("Protocolo: " + response.optString("protocolo"), 16, NAVY, true));
+                boolean forwarded = response.optBoolean("enviado", false);
+                String situation = response.optString("situacao", "pendente");
+                if (forwarded) {
+                    initScreen("Contato encaminhado",
+                            "O pedido foi aceito pelo canal comercial. A equipe dará continuidade.",
+                            true);
+                } else if ("revisar".equals(situation)) {
+                    initScreen("Contato registrado",
+                            "Dados salvos com protocolo. O encaminhamento precisa ser verificado pelo administrador.",
+                            true);
+                } else {
+                    initScreen("Contato registrado",
+                            "Dados salvos no servidor. Encaminhamento ao comercial pendente.",
+                            true);
+                }
+                content.addView(label("Protocolo: " + response.optString("protocolo"),
+                        18, NAVY, true), margins(-1, -2, 14));
+                content.addView(label(response.optString("mensagem",
+                        "Solicitação registrada no servidor ISM."),
+                        14, MUTED, false), margins(-1, -2, 16));
+                primary("Voltar ao início", ignoredButton -> showHome());
             });
         });
     }

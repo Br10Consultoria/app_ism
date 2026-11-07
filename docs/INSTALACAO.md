@@ -57,7 +57,7 @@ Esta versão mostra PIX em QR, linha digitável, PDF por PdfRenderer, envio de P
 ## Proteção de dados
 - CPF isolado não prova identidade. Uso apenas **supervisionado** com técnico autenticado e dispositivo inventariado. Para autoatendimento público, exija OTP por telefone/e-mail cadastrado no IXC e reforço de rate limit por CPF.
 - Não armazenar CPF, telefone ou faturas em preferências persistentes do Android; o app limpa a tela ao retornar.
-- Leads só serão confirmados após aceite do webhook/e-mail. Resposta 503 significa que não foi encaminhado; o técnico deve tentar novamente.
+- Leads são registrados primeiro no SQLite persistente do servidor, mesmo sem webhook/SMTP/Opa comercial configurado. Protocolo e situação informam se estão pendentes, encaminhados ou em revisão. O operador não deve afirmar que uma mensagem foi entregue apenas porque o registro foi salvo.
 - Proteger logs do reverse proxy, TLS, backups e acesso a variáveis do serviço.
 - Não habilitar transação financeira por cartão sem homologação PCI/SDK/adquirente.
 
@@ -216,3 +216,47 @@ O Opa! Suite usa **IDs de modelo e canal** (não apenas o nome textual). Localiz
 - Não é necessário aplicativo WhatsApp na maquininha: o chip fornece conectividade para falar via HTTPS com `app.ismtelecom.com.br`, que conversa com o Opa.
 
 **Pré-requisito para distribuir:** atualizar backend com `docker compose up -d --build` e validar `GET /version = 0.9.0`. A instalação no GPOS780 da Getnet pode exigir autorização/assinatura da adquirente, independentemente da compatibilidade Android. APK debug serve para Android normal e terminais de desenvolvimento/homologação.
+
+## ISM v0.10 — Corrigido "Comercial indisponível" no Quero contratar
+
+O erro na v0.9 ocorria porque `POST /api/v1/interessados` exigia `COMMERCIAL_WEBHOOK_URL` ou SMTP, mesmo quando o Opa! Suite estava configurado apenas para os modelos dos assinantes.
+
+**Agora são etapas separadas:** cadastro persistente do interessado e aviso ao comercial. Após CPF, telefone, nome, identificação do técnico e consentimento, o backend salva o registro em **SQLite** no volume `/data/leads.db` (variável `LEADS_DB`), deduplica o mesmo CPF+telefone por 1 hora e devolve um protocolo de 12 caracteres.
+
+- Sem canal comercial configurado: `200`, `enviado:false`, `situacao:pendente`. O Android mostra **Contato registrado — encaminhamento pendente**, sem afirmar envio.
+- Com canal válido: o sistema tenta Opa (modelo comercial) ou webhook HTTPS/SMTP e retorna `enviado:true` somente após aceite do canal, sem confundir aceitação com entrega ao time.
+- Com erro/timeout de entrega: o registro permanece salvo com `situacao:revisar`. Para não duplicar mensagens, não há reenvio automático desse caso; é preciso checar o histórico do canal.
+- O telefone e CPF ficam restritos ao banco no servidor. Não são retornados ao app na confirmação nem gravados em log pela API. Proteger volume, backups e acesso administrativo; aplicar política de retenção/eliminações conforme LGPD.
+
+Para avisar a equipe pelo mesmo canal Opa! Suite, configure **somente depois de criar um modelo próprio aprovado**:
+
+```dotenv
+WHATSAPP_PROVIDER=opa
+OPA_BASE_URL=https://DOMINIO_OPA_DA_ISM
+OPA_API_TOKEN=TOKEN_JA_CONFIGURADO
+OPA_CHANNEL_ID=679cc77501d3afa6ad0a1178
+OPA_TEMPLATE_LEAD_ID=ID_DE_MODELO_NOVO_INTERESSADO
+OPA_COMMERCIAL_PHONE=DDD9XXXXXXXX
+LEADS_DB=/data/leads.db
+```
+
+Template sugerido (`OPA_TEMPLATE_LEAD_ID`, 4 variáveis nesta ordem):
+
+> Novo interessado ISM Telecom: {{1}}. Telefone de contato: {{2}}. Técnico responsável: {{3}}. Protocolo: {{4}}. O interessado autorizou o contato comercial.
+
+Para facilitar o atendimento, **não incluir CPF no template de WhatsApp da equipe**; o registro completo fica apenas no banco interno. Nunca reutilizar os modelos `data_cake`, `boas_vindas` ou `financeiro_boleto` para aviso interno do comercial. O destinatário deve ser um número de celular da equipe com autorização para receber essas mensagens.
+
+Comandos administrativos no próprio servidor (não no app):
+
+```bash
+# Listar protocolos e telefones parcialmente mascarados, sem CPF
+cd /home/suporte/app_ism/backend
+docker compose exec -T api python -m app.commercial_leads pendentes
+
+# Após configurar o canal comercial, tentar apenas os registros pendentes
+docker compose exec -T api python -m app.commercial_leads encaminhar
+```
+
+Não execute `encaminhar` antes de ter um modelo próprio aprovado e destinatário autorizado. Verifique casos `revisar` diretamente no Opa para evitar mensagens duplicadas. A confirmação de cadastro comercial não depende do modelo PIX recebido nem altera a integração de cobranças.
+
+**Para atualizar:** `git switch main && git pull --ff-only origin main`, depois `cd backend && docker compose up -d --build`. O endpoint `GET /version` deve mostrar `0.10.0`. Instale o APK v0.10 se desejar que o Android mostre a situação correta e o protocolo.
