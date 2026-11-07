@@ -167,7 +167,7 @@ _outbox_lock = Lock()
 
 
 def _db_path():
-    return os.getenv("META_OUTBOX_DB", "/data/whatsapp_outbox.db")
+    return os.getenv("WHATSAPP_OUTBOX_DB") or os.getenv("META_OUTBOX_DB", "/data/whatsapp_outbox.db")
 
 
 def _event_key(kind, customer_id, invoice_id):
