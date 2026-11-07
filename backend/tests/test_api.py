@@ -266,3 +266,22 @@ def test_recent_invoices_query_descending(monkeypatch):
     monkeypatch.setenv("IXC_USER_ID", "test")
     monkeypatch.setenv("IXC_TOKEN", "test")
     assert asyncio.run(IXC().recent_customer_invoices("123")) == []
+
+
+
+def test_backend_version_and_short_session_ttl():
+    import base64
+    import json
+    import time
+    version = client.get("/version")
+    assert version.status_code == 200
+    assert version.json() == {
+        "app": "ISM Telecom", "versao": "0.6.0", "sessao_segundos": 60
+    }
+
+    token = create_session("123")
+    encoded = token.split(".", 1)[0]
+    payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+    assert payload["id"] == "123"
+    assert 59 <= payload["exp"] - int(time.time()) <= 61
+    assert read_session(token) == "123"
