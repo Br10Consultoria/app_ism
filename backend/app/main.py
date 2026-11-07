@@ -372,7 +372,6 @@ async def send_commercial(data):
     if (os.getenv("WHATSAPP_PROVIDER", "").lower() == "opa"
             and os.getenv("OPA_TEMPLATE_LEAD_ID", "")
             and os.getenv("OPA_COMMERCIAL_PHONE", "")):
-        from .ixc import digits
         # Telefone do departamento comercial cadastrado pelo administrador.
         destination = digits(os.environ["OPA_COMMERCIAL_PHONE"])
         if len(destination) == 11 and destination[2] == "9":
