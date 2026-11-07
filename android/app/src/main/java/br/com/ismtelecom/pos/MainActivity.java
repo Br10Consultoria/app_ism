@@ -540,6 +540,13 @@ public class MainActivity extends Activity {
                 "Olá! Encontramos " + count + (count == 1 ? " fatura disponível." : " faturas disponíveis."), true);
         showCustomerInfo();
 
+        JSONObject wa = invoiceResponse.optJSONObject("whatsapp");
+        if (isSessionValid() && wa != null && wa.optBoolean("boas_vindas_disponivel", false)) {
+            primary("Enviar boas-vindas ao novo cliente (WhatsApp)", v -> sendWelcomeMeta());
+            content.addView(label("Somente cadastro recente no IXC, com autorização do cliente.",
+                    12, MUTED, false), margins(-1, -2, 14));
+        }
+
         if (isSessionValid()) {
             primary("Consultar PIX já recebidos", v -> showPaidPixHistory());
             content.addView(label("Consulte um PIX já pago no IXC e compartilhe a confirmação.",
@@ -915,7 +922,16 @@ public class MainActivity extends Activity {
                 "Não substitui o comprovante bancário do pagador.", 12, MUTED, false);
         content.addView(note, margins(-1, -2, 16));
 
-        primary("Enviar confirmação pelo WhatsApp", v -> {
+        JSONObject wa = invoiceResponse == null ? null : invoiceResponse.optJSONObject("whatsapp");
+        if (wa != null && wa.optBoolean("confirmacao_pix_disponivel", false)) {
+            primary("Enviar confirmação PIX via API WhatsApp", v -> sendPixMeta(invoiceId));
+        } else {
+            content.addView(label(
+                    "Envio pela API da Meta ainda não configurado para este cliente no servidor. " +
+                    "A confirmação por PDF continua disponível.",
+                    12, MUTED, false), margins(-1, -2, 12));
+        }
+        primary("Compartilhar PDF pelo Android", v -> {
             if (!isSessionValid()) {
                 showHome();
                 dialog("Sessão expirada. Consulte novamente para emitir confirmação.");
@@ -929,6 +945,73 @@ public class MainActivity extends Activity {
             }
         });
         primary("Nova consulta", v -> showLookup());
+    }
+
+    private String maskedMetaNumber() {
+        if (invoiceResponse == null) return "";
+        JSONObject wa = invoiceResponse.optJSONObject("whatsapp");
+        return wa == null ? "" : wa.optString("destinatario_mascarado", "");
+    }
+
+    private void sendWelcomeMeta() {
+        if (!isSessionValid()) {
+            showLookup();
+            dialog("Sessão expirada. Consulte o CPF novamente.");
+            return;
+        }
+        String masked = maskedMetaNumber();
+        new AlertDialog.Builder(this)
+                .setTitle("Boas-vindas ao novo cliente")
+                .setMessage("Confirma que o cadastro do assinante é novo no IXC e que ele " +
+                        "autorizou receber uma mensagem no WhatsApp " + masked + "? " +
+                        "O envio será realizado pelo servidor usando um modelo aprovado pela Meta.")
+                .setNegativeButton("Cancelar", (d, which) -> {})
+                .setPositiveButton("Cliente autorizou: enviar", (d, which) -> {
+                    JSONObject request = new JSONObject();
+                    try {
+                        request.put("session", session);
+                        request.put("consentimento", true);
+                        request.put("confirma_novo_cliente", true);
+                    } catch (JSONException ignored) {}
+                    call("/api/v1/whatsapp/boas-vindas", request,
+                            result -> showMetaSendStatus(result));
+                }).show();
+    }
+
+    private void sendPixMeta(String invoiceId) {
+        if (!isSessionValid()) {
+            showLookup();
+            dialog("Sessão expirada. Consulte o CPF novamente.");
+            return;
+        }
+        String masked = maskedMetaNumber();
+        new AlertDialog.Builder(this)
+                .setTitle("Confirmar envio de recebimento PIX")
+                .setMessage("O servidor consultará novamente o IXC para conferir a baixa " +
+                        "desta fatura e enviará uma mensagem pelo WhatsApp " + masked + ". " +
+                        "O cliente autorizou o recebimento?")
+                .setNegativeButton("Cancelar", (d, which) -> {})
+                .setPositiveButton("Cliente autorizou: enviar", (d, which) -> {
+                    JSONObject request = new JSONObject();
+                    try {
+                        request.put("session", session);
+                        request.put("consentimento", true);
+                    } catch (JSONException ignored) {}
+                    call("/api/v1/whatsapp/pix/" + invoiceId, request,
+                            result -> showMetaSendStatus(result));
+                }).show();
+    }
+
+    private void showMetaSendStatus(JSONObject result) {
+        if (result.optBoolean("solicitado", false)) {
+            dialog("A Meta aceitou o envio para o WhatsApp " +
+                    result.optString("destinatario_mascarado") +
+                    ". A entrega ao cliente ainda precisa ser confirmada na plataforma Meta.");
+        } else {
+            dialog(result.optString("mensagem",
+                    "Essa mensagem já foi solicitada anteriormente. " +
+                    "Consulte o histórico no WhatsApp Business Manager."));
+        }
     }
 
     private void createReceiptPdf(JSONObject receipt) throws IOException {

@@ -193,6 +193,13 @@ class IXC:
                     return row
         return None
 
+    async def customer_by_id(self, customer_id):
+        found = await self.list_records("cliente", "cliente.id", customer_id, 1)
+        for row in found:
+            if str(row.get("id")) == str(customer_id):
+                return row
+        return None
+
     async def open_invoices(self, customer_id):
         found = await self.list_records("fn_areceber", "fn_areceber.id_cliente", customer_id, 100)
         result = []
