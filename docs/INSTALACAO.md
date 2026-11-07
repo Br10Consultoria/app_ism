@@ -57,7 +57,7 @@ Esta versão mostra PIX em QR, linha digitável, PDF por PdfRenderer, envio de P
 ## Proteção de dados
 - CPF isolado não prova identidade. Uso apenas **supervisionado** com técnico autenticado e dispositivo inventariado. Para autoatendimento público, exija OTP por telefone/e-mail cadastrado no IXC e reforço de rate limit por CPF.
 - Não armazenar CPF, telefone ou faturas em preferências persistentes do Android; o app limpa a tela ao retornar.
-- Leads só serão confirmados após aceite do webhook/e-mail. Resposta 503 significa que não foi encaminhado; o técnico deve tentar novamente.
+- Leads são registrados primeiro no SQLite persistente do servidor, mesmo sem webhook/SMTP/Opa comercial configurado. Protocolo e situação informam se estão pendentes, encaminhados ou em revisão. O operador não deve afirmar que uma mensagem foi entregue apenas porque o registro foi salvo.
 - Proteger logs do reverse proxy, TLS, backups e acesso a variáveis do serviço.
 - Não habilitar transação financeira por cartão sem homologação PCI/SDK/adquirente.
 
