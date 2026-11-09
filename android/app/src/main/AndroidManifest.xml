@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 11+ package visibility: identifica a Intent oficial m-SiTef -->
+    <queries>
+        <intent><action android:name="br.com.softwareexpress.sitef.msitef.ACTIVITY_CLISITEF" /></intent>
+    </queries>
     <application
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
