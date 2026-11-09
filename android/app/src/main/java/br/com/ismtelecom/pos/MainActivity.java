@@ -66,6 +66,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
 import java.util.Locale;
@@ -80,7 +81,8 @@ public class MainActivity extends Activity {
     private static final int MUTED = Color.rgb(103, 126, 143);
     private static final int GREEN = Color.rgb(58, 169, 109);
     private static final int RED = Color.rgb(202, 66, 103);
-    private static final long SESSION_MILLIS = 60_000L; // Mesmo TTL do backend.
+    private static final long SESSION_MILLIS = 60_000L;
+    private static final int REQ_MSITEF = 1212; // Mesmo TTL do backend.
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler ui = new Handler(Looper.getMainLooper());
     private LinearLayout content;
@@ -97,6 +99,10 @@ public class MainActivity extends Activity {
     private ParcelFileDescriptor pdfDescriptor;
     private int currentPage = 0;
     private String pixWatchingInvoiceId = "";
+    private String tefAttempt = "";
+    private String tefResultToken = "";
+    private String tefMode = "";
+    private int tefCents = 0;
     private TextView pixStatus;
 
     private final Runnable pixAutoCheck = new Runnable() {
@@ -317,6 +323,12 @@ public class MainActivity extends Activity {
             case "pix-history":
                 if (invoiceResponse != null && isSessionValid()) renderInvoices();
                 else showLookup();
+                break;
+            case "tef_processando":
+                dialog("Aguarde o retorno do SiTef. Não inicie novo pagamento.");
+                break;
+            case "tef_resultado":
+                showHome();
                 break;
             case "receipt":
                 showLookup();
@@ -807,9 +819,205 @@ public class MainActivity extends Activity {
     private void showPaymentOptions(String id) {
         if (!isSessionValid()) { showHome(); dialog("Sessão expirada. Faça nova consulta."); return; }
         new AlertDialog.Builder(this).setTitle("Como deseja pagar?")
-                .setItems(new String[]{"PIX (QR Code)", "Código de barras", "Visualizar boleto PDF"},
-                        (d, item) -> requestPayment(id, new String[]{"pix", "barra", "boleto"}[item]))
+                .setItems(new String[]{"PIX (QR Code)", "Cartão de débito à vista (TEF)",
+                        "Cartão de crédito à vista (TEF)",
+                        "Código de barras", "Visualizar boleto PDF"}, (d, item) -> {
+                    if (item == 1 || item == 2) {
+                        confirmCardPayment(id, item == 1 ? "debito" : "credito");
+                    } else {
+                        requestPayment(id, item == 0 ? "pix" : item == 3 ? "barra" : "boleto");
+                    }
+                })
                 .show();
+    }
+
+
+    /** Executa somente se o m-SiTef oficial estiver disponível no Android. */
+    private void confirmCardPayment(String invoiceId, String modality) {
+        if (!isSessionValid()) {
+            showHome(); dialog("Sessão expirada. Consulte o cliente novamente."); return;
+        }
+        Intent probe = new Intent("br.com.softwareexpress.sitef.msitef.ACTIVITY_CLISITEF");
+        if (probe.resolveActivity(getPackageManager()) == null) {
+            dialog("m-SiTef não encontrado neste dispositivo. Consulte a homologação " +
+                    "Fiserv/Getnet; nenhum pagamento foi iniciado.");
+            return;
+        }
+        String labelMethod = "debito".equals(modality) ? "débito" : "crédito à vista";
+        new AlertDialog.Builder(this)
+                .setTitle("Homologação de cartão — " + labelMethod)
+                .setMessage("A transação pode movimentar dinheiro real. " +
+                        "O ISM NÃO dará baixa automaticamente no IXC nesta versão. " +
+                        "O setor financeiro deve conferir o comprovante TEF e conciliar " +
+                        "o título manualmente. Deseja continuar para o m-SiTef?")
+                .setNegativeButton("Cancelar", (d, which) -> {})
+                .setPositiveButton("Iniciar TEF", (d, which) -> startCardPayment(invoiceId, modality))
+                .show();
+    }
+
+    private void startCardPayment(String invoiceId, String modality) {
+        if (!isSessionValid()) {
+            showHome(); dialog("Sessão expirada. Consulte novamente."); return;
+        }
+        JSONObject request = new JSONObject();
+        try {
+            request.put("session", session);
+            request.put("modalidade", modality);
+        } catch (JSONException ignored) {}
+        call("/api/v1/cartao/faturas/" + invoiceId + "/preparar", request, result -> {
+            JSONObject sitef = result.optJSONObject("sitef");
+            if (sitef == null) {
+                dialog("O servidor não retornou os parâmetros SiTef.");
+                return;
+            }
+            tefAttempt = result.optString("tentativa", "");
+            tefResultToken = result.optString("segredo_retorno", "");
+            tefMode = result.optString("modalidade", "");
+            tefCents = result.optInt("valor_centavos", 0);
+            if (tefAttempt.isEmpty() || tefResultToken.isEmpty() || tefCents <= 0) {
+                dialog("Preparação TEF incompleta. Não inicie uma nova tentativa sem conferir.");
+                return;
+            }
+            Intent intent = new Intent("br.com.softwareexpress.sitef.msitef.ACTIVITY_CLISITEF");
+            intent.putExtra("empresaSitef", sitef.optString("empresaSitef"));
+            intent.putExtra("enderecoSitef", sitef.optString("enderecoSitef"));
+            intent.putExtra("CNPJ_CPF", sitef.optString("CNPJ_CPF"));
+            intent.putExtra("modalidade", "debito".equals(tefMode) ? "2" : "3");
+            intent.putExtra("valor", Integer.toString(tefCents));
+            intent.putExtra("numeroCupom", tefAttempt);
+            intent.putExtra("operador", "ISM");
+            intent.putExtra("data", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")));
+            intent.putExtra("hora", LocalDateTime.now().format(DateTimeFormatter.ofPattern("HHmmss")));
+            intent.putExtra("restricoes", "debito".equals(tefMode)
+                    ? "TransacoesHabilitadas=16" : "TransacoesHabilitadas=26");
+            if ("credito".equals(tefMode)) intent.putExtra("numParcelas", "1");
+            for (String param : new String[]{"terminalSitef", "comExterna",
+                    "cnpj_automacao", "cnpj_facilitador"}) {
+                String value = sitef.optString(param, "");
+                if (!value.isEmpty()) intent.putExtra(param, value);
+            }
+            stopPixAutoCheck();
+            ui.removeCallbacks(sessionTick);
+            deadline = 0;
+            session = "";
+            screenType = "tef_processando";
+            initScreen("Pagamento em andamento",
+                    "Aguardando a aplicação oficial m-SiTef. Não cobre novamente " +
+                    "sem verificar a transação.", true);
+            content.addView(label("Tentativa: " + tefAttempt, 15, NAVY, true));
+            try {
+                startActivityForResult(intent, REQ_MSITEF);
+            } catch (ActivityNotFoundException ex) {
+                showTefResult("m-SiTef não está disponível. Tentativa registrada para análise.",
+                        "", "", "");
+            } catch (Exception ex) {
+                showTefResult("Falha ao iniciar m-SiTef. Verifique a tentativa antes de repetir.",
+                        "", "", "");
+            }
+        });
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_MSITEF) return;
+        String code = data == null ? "" : data.getStringExtra("CODRESP");
+        String nsu = data == null ? "" : data.getStringExtra("NSU_SITEF");
+        String authorization = data == null ? "" : data.getStringExtra("COD_AUTORIZACAO");
+        String network = data == null ? "" : data.getStringExtra("REDE_AUT");
+        String receiptClient = data == null ? "" : data.getStringExtra("VIA_CLIENTE");
+        String receiptCompany = data == null ? "" : data.getStringExtra("VIA_ESTABELECIMENTO");
+        final String text = resultCode == RESULT_OK && ("0".equals(code) || "00".equals(code))
+                ? "O m-SiTef retornou indicação de aprovação. IXC ainda NÃO baixado."
+                : "Resultado de cartão não confirmado. Verifique no SiTef antes de cobrar novamente.";
+        showTefResult(text, receiptClient, receiptCompany, nsu);
+        if (tefAttempt.isEmpty() || tefResultToken.isEmpty()) return;
+        JSONObject body = new JSONObject();
+        try {
+            body.put("segredo_retorno", tefResultToken);
+            body.put("activity_result", resultCode);
+            body.put("codresp", code == null ? "" : code);
+            body.put("nsu", nsu == null ? "" : nsu);
+            body.put("autorizacao", authorization == null ? "" : authorization);
+            body.put("rede", network == null ? "" : network);
+        } catch (JSONException ignored) {}
+        call("/api/v1/cartao/tentativas/" + tefAttempt + "/retorno", body, response -> {
+            content.addView(label("Auditoria no servidor: " +
+                    response.optString("situacao", "a_conciliar"), 13, NAVY, true));
+            content.addView(label("Baixa IXC: NÃO EXECUTADA. " +
+                    "Confirme a transação no SiTef e concilie no IXC.",
+                    13, RED, true));
+            tefResultToken = "";
+        }, message -> dialog("Não foi possível registrar o retorno no servidor: " + message
+                + ". Consulte o SiTef e a auditoria de tentativas antes de repetir."));
+    }
+
+    private void showTefResult(String description, String receiptClient,
+                               String receiptCompany, String nsu) {
+        screenType = "tef_resultado";
+        closePdf();
+        initScreen("Resultado TEF — homologação", description, true);
+        content.addView(label("Tentativa: " + tefAttempt, 14, NAVY, true),
+                margins(-1, -2, 6));
+        if (!nsu.isEmpty()) content.addView(label("NSU SiTef: " + nsu, 13, NAVY, true),
+                margins(-1, -2, 12));
+        content.addView(label("A autorização do cartão e a baixa da fatura " +
+                "devem ser conferidas separadamente.", 13, RED, true),
+                margins(-1, -2, 16));
+        if (receiptClient != null && !receiptClient.isBlank()) {
+            primary("Imprimir via do cliente (Android)", v -> printTefText(receiptClient));
+        }
+        if (receiptCompany != null && !receiptCompany.isBlank()) {
+            primary("Imprimir via do estabelecimento (Android)", v -> printTefText(receiptCompany));
+        }
+        primary("Voltar ao início", v -> showHome());
+    }
+
+    /** Gera PDF local para o Android PrintManager. SDK térmico Gertec pendente. */
+    private void printTefText(String receipt) {
+        if (receipt == null || receipt.isEmpty() || receipt.length() > 12000) {
+            dialog("Via TEF indisponível ou inválida."); return;
+        }
+        try {
+            closePdf();
+            File folder = new File(getCacheDir(), "boletos");
+            if (!folder.isDirectory() && !folder.mkdirs()) throw new IOException("Cache indisponível");
+            tempPdf = new File(folder, "via_tef_temporaria.pdf");
+            PdfDocument document = new PdfDocument();
+            try {
+                Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+                paint.setTextSize(10);
+                paint.setTypeface(Typeface.MONOSPACE);
+                String normalized = receipt.replace("\r", "");
+                String[] rows = normalized.split("\n");
+                int rowIndex = 0;
+                int page = 1;
+                while (rowIndex < rows.length && page <= 20) {
+                    PdfDocument.PageInfo info = new PdfDocument.PageInfo.Builder(288, 720, page).create();
+                    PdfDocument.Page pageData = document.startPage(info);
+                    Canvas canvas = pageData.getCanvas();
+                    int y = 25;
+                    while (rowIndex < rows.length && y < 690) {
+                        String line = rows[rowIndex++].replaceAll("[^\\p{Print}]", "");
+                        for (int from = 0; from < line.length(); from += 42) {
+                            canvas.drawText(line.substring(from, Math.min(line.length(), from + 42)),
+                                    12, y, paint);
+                            y += 14;
+                            if (y >= 690) break;
+                        }
+                        if (line.isEmpty()) y += 14;
+                    }
+                    document.finishPage(pageData);
+                    page++;
+                }
+                try (FileOutputStream output = new FileOutputStream(tempPdf)) {
+                    document.writeTo(output);
+                }
+            } finally { document.close(); }
+            printPdf();
+        } catch (Exception ex) {
+            dialog("Não foi possível preparar impressão. A impressora interna " +
+                    "Gertec poderá exigir SDK de impressão homologado.");
+        }
     }
 
     private void getBoleto(String id, String operation) {
