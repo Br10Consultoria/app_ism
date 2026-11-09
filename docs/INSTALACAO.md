@@ -292,3 +292,90 @@ Esta opção não usa WhatsApp instalado na maquininha e não requer credenciais
 A API do Opa documenta `openCustomerService: true` no envio de template: https://api.opasuite.com.br/. Configure o modelo para a finalidade correta, consulte status e permissões antes do primeiro teste real. Não use `data_cake` (boas-vindas a assinantes) para interessados.
 
 Atualização: `git switch main && git pull --ff-only origin main`; `cd backend && docker compose up -d --build`; conferir `GET /version = 0.11.0`; instalar APK v0.11.
+
+## ISM v0.12 — m-SiTef por Intent (HOMOLOGAÇÃO, SEM BAIXA IXC)
+
+**Produção v0.11 permanece intacta até liberação.** Nesta versão de homologação, o técnico escolhe uma fatura do IXC e solicita **débito à vista** ou **crédito à vista**. O m-SiTef oficial precisa estar instalado/habilitado na Gertec e reconhecido pela Intent Android `br.com.softwareexpress.sitef.msitef.ACTIVITY_CLISITEF`. A aplicação não instala nem substitui o software de pagamento do fornecedor.
+
+### Segurança e limites desta entrega
+
+- Sem autorização de homologação: `CARD_TEF_HOMOLOGATION_ENABLED=false` bloqueia no backend toda preparação de cartão.
+- Valor **sempre consultado novamente no IXC** (`fn_areceber.valor_aberto`), exigindo título aberto e liberado, pertencente ao cliente da sessão autenticada; Android não envia valor.
+- O backend cria `tentativa` única e um segredo efêmero de retorno. Uma tentativa bloqueia novas cobranças do **mesmo título** até conciliação administrativa; nunca reenvie pagamento à Getnet só por um timeout ou fechamento do app.
+- Na maquininha, antes de disparar a venda, exibe aviso de que a operação **pode movimentar dinheiro real** e de que o **IXC não será baixado**.
+- Resultados da Intent são registrados em `/data/tef_attempts.db` com NSU, código de autorização e modalidade; **não armazena PAN, PIN, comprovantes TEF brutos nem dados do cartão** no backend. Identificadores são evidências reportadas pelo Android, **não prova autenticada da Getnet/SiTef**.
+- **Baixa automática no IXC NÃO IMPLEMENTADA nem habilitada**, mesmo após sinal de aprovação da Intent. É obrigatória conciliação manual com Getnet/SiTef. Necessário confirmar finalização TEF, cancelamentos, estornos, consulta segura ao provedor e os parâmetros da conta financeira antes de implantar a baixa automática.
+- A tela do Android oferece impressão da via retornada pelo TEF via PDF/Android PrintManager. **Impressão na térmica integrada Gertec ainda não foi homologada**, podendo requerer SDK ou serviço de impressão da adquirente. Se não houver serviço Android compatível, não afirmamos que a impressão aconteceu.
+
+### Configuração no servidor de testes
+
+```dotenv
+# NÃO habilitar antes de homologar dispositivo e parâmetros
+CARD_TEF_HOMOLOGATION_ENABLED=false
+CARD_TEF_DB=/data/tef_attempts.db
+MSITEF_EMPRESA=00000001
+MSITEF_ENDERECO=SEU_SERVIDOR_SITEF_HOMOLOGACAO
+MSITEF_CNPJ_ESTABELECIMENTO=CNPJ_DO_ESTABELECIMENTO
+MSITEF_TERMINAL=
+MSITEF_COM_EXTERNA=
+MSITEF_CNPJ_AUTOMACAO=
+MSITEF_CNPJ_FACILITADOR=
+```
+
+Os exemplos acima são **marcadores, não credenciais**. `empresaSitef`, `enderecoSitef`, CNPJ do estabelecimento, `comExterna`, terminal e parâmetros opcionais devem ser fornecidos/validados pela Fiserv/Getnet. Não copiar dados TLS de produção para ambiente de homologação sem autorização.
+
+Após validar as configurações e usar uma fatura de **teste**, com eventual transação financeira real autorizada, habilitar apenas no backend de homologação:
+
+```dotenv
+CARD_TEF_HOMOLOGATION_ENABLED=true
+```
+
+Em seguida:
+
+```bash
+cd /home/suporte/app_ism
+git switch main
+git pull --ff-only origin main
+cd backend
+docker compose up -d --build
+curl -fsS https://app.ismtelecom.com.br/version
+# versão esperada 0.12.0
+```
+
+**Atenção:** se este mesmo endereço atende terminais de produção, mantenha `CARD_TEF_HOMOLOGATION_ENABLED=false` e use backend segregado para os primeiros testes financeiros. Esse toggle é global por servidor, não uma autorização individual por dispositivo.
+
+### Identificar os campos financeiros do IXC SEM ESCREVER
+
+Os campos `filial_id`, `conta_` e `id_conta` **não são equivalentes**. A documentação IXC define:
+
+- `filial_id`: filial usada no lançamento
+- `conta_`: conta/caixa, isto é, `fn_carteira_cobranca.id_conta` vinculado à carteira da fatura
+- `id_conta`: **planejamento analítico** do lançamento, que não deve ser confundido com a conta/caixa
+
+O script `app.ixc_financeiro_audit` consulta somente `GET fn_areceber` e, se a fatura tiver carteira, `GET fn_carteira_cobranca`. Nunca envia POST/PUT/DELETE ou executa baixa, e só imprime campos financeiros selecionados:
+
+```bash
+cd /home/suporte/app_ism/backend
+docker compose exec -T api python -m app.ixc_financeiro_audit ID_NUMERICO_DA_FATURA
+```
+
+A consulta poderá retornar a carteira e um **candidato para `conta_`**, não necessariamente a **conta de liquidação Getnet**. Confirmar a conta que o financeiro deseja usar e o planejamento analítico no painel IXC antes de qualquer baixa. A rotina atual `app.ixc.IXC` mantém a lista de endpoints apenas de leitura, sem adicionar `fn_areceber_recebimentos_baixas_novo`.
+
+### Consultar tentativas do terminal e conciliar
+
+```bash
+docker compose exec -T api python -m app.card_tef
+```
+
+Estados possíveis: `iniciada` (transação iniciou, pode ter sido interrompida), `retorno_positivo_a_conciliar`, `conferir_tef`. Não há opção de baixar ou apagar tentativas pela API do terminal. Verifique o NSU na Getnet antes de qualquer ação financeira.
+
+### Documentação original Fiserv
+
+- https://dev.softwareexpress.com.br/docs/m-sitef/introducao_integracao_outro_app/
+- https://dev.softwareexpress.com.br/docs/m-sitef/pagamento_credito_vista/
+- https://dev.softwareexpress.com.br/docs/m-sitef/pagamento_debito_vista/
+- https://dev.softwareexpress.com.br/docs/m-sitef/exemplo_tratamento_retorno_msitef/
+
+A Intent de pagamento é `br.com.softwareexpress.sitef.msitef.ACTIVITY_CLISITEF`; para débito à vista `modalidade=2` e `restricoes=TransacoesHabilitadas=16`; crédito à vista `modalidade=3`, `numParcelas=1`, `restricoes=TransacoesHabilitadas=26`. O valor é inteiro em centavos. O retorno pode trazer `CODRESP`, `NSU_SITEF`, `COD_AUTORIZACAO`, `VIA_CLIENTE` e `VIA_ESTABELECIMENTO`. O resultado não garante liquidação final sem consulta/conciliador autorizado.
+
+**Critérios antes de implantação geral:** fluxo completo certificado pela adquirente; transação de homologação aprovada e recusada; prevenção de cobrança duplicada; cancelamento e resultado incerto; impressão térmica física; integração de consulta/baixa IXC de escrita validada com usuário financeiro restrito; conciliação de taxas e estornos. Até lá: **não usar v0.12 como caixa de produção.**
