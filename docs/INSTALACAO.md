@@ -317,7 +317,7 @@ MSITEF_EMPRESA=00000001
 MSITEF_ENDERECO=SEU_SERVIDOR_SITEF_HOMOLOGACAO
 MSITEF_CNPJ_ESTABELECIMENTO=CNPJ_DO_ESTABELECIMENTO
 MSITEF_TERMINAL=
-MSITEF_COM_EXTERNA=
+MSITEF_COM_EXTERNA=4
 MSITEF_CNPJ_AUTOMACAO=
 MSITEF_CNPJ_FACILITADOR=
 ```
@@ -379,3 +379,5 @@ Estados possíveis: `iniciada` (transação iniciou, pode ter sido interrompida)
 A Intent de pagamento é `br.com.softwareexpress.sitef.msitef.ACTIVITY_CLISITEF`; para débito à vista `modalidade=2` e `restricoes=TransacoesHabilitadas=16`; crédito à vista `modalidade=3`, `numParcelas=1`, `restricoes=TransacoesHabilitadas=26`. O valor é inteiro em centavos. O retorno pode trazer `CODRESP`, `NSU_SITEF`, `COD_AUTORIZACAO`, `VIA_CLIENTE` e `VIA_ESTABELECIMENTO`. O resultado não garante liquidação final sem consulta/conciliador autorizado.
 
 **Critérios antes de implantação geral:** fluxo completo certificado pela adquirente; transação de homologação aprovada e recusada; prevenção de cobrança duplicada; cancelamento e resultado incerto; impressão térmica física; integração de consulta/baixa IXC de escrita validada com usuário financeiro restrito; conciliação de taxas e estornos. Até lá: **não usar v0.12 como caixa de produção.**
+
+**Observação Fiserv para Smart POS:** o campo `comExterna` é **obrigatório** e deve valer `4` (TLS Fiserv/GWP), conforme https://dev.softwareexpress.com.br/docs/m-sitef/parametros_entrada/. Os dados número lógico do estabelecimento (ex. formato TFxxxxxx) e código do estabelecimento entregues pela operadora não definem, por si só, os parâmetros `empresaSitef` nem `enderecoSitef`. Solicite o mapeamento formal no chamado de homologação. A identificação financeira no IXC: `conta_` é o ID da conta/caixa associada à carteira, e `id_conta` refere-se ao planejamento analítico da baixa; qualquer substituição por conta 'Cartão Gertec' deve ser validada com o financeiro para não conflitar com a liquidação da carteira bancária original.
