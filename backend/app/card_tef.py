@@ -60,6 +60,10 @@ def homologation_config():
         "cnpj_automacao": re.sub(r"\D", "", os.getenv("MSITEF_CNPJ_AUTOMACAO", "")),
         "cnpj_facilitador": re.sub(r"\D", "", os.getenv("MSITEF_CNPJ_FACILITADOR", "")),
     }
+    # Fiserv m-SiTef: para terminais Smart POS, comExterna=4 (TLS Fiserv/GWP).
+    # Não permitir começar pagamento com método de comunicação incorreto.
+    if optional["comExterna"] != "4":
+        raise CardTefError("Smart POS exige MSITEF_COM_EXTERNA=4 (TLS Fiserv)", 503)
     for key, value in optional.items():
         if value:
             fields[key] = value
