@@ -18,6 +18,7 @@ def configure(monkeypatch, tmp_path, *, enabled=False):
     monkeypatch.setenv("CARD_TEF_DB", str(tmp_path / "tef.db"))
     monkeypatch.setenv("CARD_TEF_HOMOLOGATION_ENABLED", "true" if enabled else "false")
     monkeypatch.setenv("MSITEF_EMPRESA", "00000001")
+    monkeypatch.setenv("MSITEF_COM_EXTERNA", "4")
     monkeypatch.setenv("MSITEF_ENDERECO", "sitef-hml.exemplo.test:443")
     monkeypatch.setenv("MSITEF_CNPJ_ESTABELECIMENTO", "12345678000190")
     main.attempts.clear()
@@ -131,3 +132,12 @@ def test_audit_script_requires_invoice_id(monkeypatch):
     assert safe_field(data, ("id", "id_filial", "id_carteira_cobranca")) == {
         "id": "123", "id_filial": "1", "id_carteira_cobranca": "8"
     }
+
+def test_smartpos_requires_fiserv_tls(monkeypatch, tmp_path):
+    configure(monkeypatch, tmp_path, enabled=True)
+    monkeypatch.setenv("MSITEF_COM_EXTERNA", "1")
+    response = client.post("/api/v1/cartao/faturas/123/preparar",
+        headers=headers, json={"session": main.create_session("17"), "modalidade": "debito"})
+    assert response.status_code == 503
+    assert "MSITEF_COM_EXTERNA=4" in response.text
+    assert not (tmp_path / "tef.db").exists()
