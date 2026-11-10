@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from .ixc import IXC, IXCError, digits, valid_cpf, valid_document, format_document, pick
 from .pix_confirmation import verify_pix_receipt
+from .card_tef import CardTefError, amount_in_cents, homologation_config, prepare, submit_result
 from .commercial_leads import save_interest, claim_for_send, set_status
 from . import whatsapp_opa
 from .whatsapp_provider import (
@@ -48,6 +49,19 @@ class WhatsAppRequest(SessionRequest):
 
 class WelcomeRequest(WhatsAppRequest):
     confirma_novo_cliente: bool
+
+
+class CardPrepare(SessionRequest):
+    modalidade: str = Field(pattern=r"^(debito|credito)$")
+
+
+class CardReturn(BaseModel):
+    segredo_retorno: str = Field(min_length=20, max_length=300)
+    activity_result: int
+    codresp: str = Field(default="", max_length=20)
+    nsu: str = Field(default="", max_length=40)
+    autorizacao: str = Field(default="", max_length=40)
+    rede: str = Field(default="", max_length=60)
 
 
 class Lead(BaseModel):
@@ -133,7 +147,7 @@ async def validar_terminal():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.11.0", "sessao_segundos": 60}
+    return {"app": "ISM Telecom", "versao": "0.12.0", "sessao_segundos": 60}
 
 
 @app.post("/api/v1/sessao/renovar",
@@ -180,6 +194,53 @@ async def faturas(body: Lookup):
                 "mensagem": "" if invoices else "Nenhuma cobrança em aberto"}
     except IXCError:
         raise HTTPException(502, "Erro ao consultar cobranças no IXC")
+
+
+@app.post("/api/v1/cartao/faturas/{invoice_id}/preparar",
+          dependencies=[Depends(require_terminal), Depends(throttle)])
+async def preparar_tef(invoice_id: str, body: CardPrepare):
+    """Pagamento por Intent m-SiTef: lê IXC de novo, não aceita valor do Android."""
+    if not re.fullmatch(r"[0-9]{1,15}", invoice_id):
+        raise HTTPException(422, "Cobrança inválida")
+    customer_id = read_session(body.session)
+    try:
+        config = homologation_config()
+        ixc = IXC()
+        invoice = await ixc.invoice(invoice_id)
+        if (not invoice or str(invoice.get("id_cliente")) != customer_id
+                or invoice.get("status") != "A" or invoice.get("liberado") != "S"):
+            raise HTTPException(409, "Cobrança não está aberta para este cliente")
+        # Exige valor_aberto EXPLÍCITO e positivo retornado do IXC.
+        cents = amount_in_cents(invoice.get("valor_aberto"))
+        record = prepare(invoice_id, customer_id, body.modalidade, cents)
+        return {
+            **record,
+            "modalidade": body.modalidade,
+            "valor_centavos": cents,
+            "sitef": config,
+            "baixa_ixc_automatica": False,
+            "aviso": "HOMOLOGAÇÃO: pagamento poderá ser real. "
+                     "A baixa no IXC NÃO será executada automaticamente; "
+                     "conferir autorização e conciliar manualmente.",
+        }
+    except CardTefError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    except IXCError as exc:
+        raise HTTPException(502, "Falha ao consultar cobrança no IXC") from exc
+
+
+@app.post("/api/v1/cartao/tentativas/{attempt_id}/retorno",
+          dependencies=[Depends(require_terminal), Depends(throttle)])
+async def registrar_retorno_tef(attempt_id: str, body: CardReturn):
+    """Recebe evidência do aparelho; NÃO comprova baixa ou liquidação."""
+    try:
+        return submit_result(
+            attempt_id, body.segredo_retorno, body.activity_result,
+            codresp=body.codresp, nsu=body.nsu, authorization=body.autorizacao,
+            network=body.rede
+        )
+    except CardTefError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
 
 
 @app.post("/api/v1/faturas/pix-recebidos",
