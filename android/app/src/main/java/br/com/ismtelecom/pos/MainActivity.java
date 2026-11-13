@@ -195,7 +195,7 @@ public class MainActivity extends Activity {
     /** Logo oficial: proporção original e sem desenho manual inclinado. */
     private View logo(int height) {
         ImageView image = new ImageView(this);
-        image.setImageBitmap(IsmOfficialLogo.decode());
+        image.setImageBitmap(IsmOfficialLogo.decode(this));
         image.setScaleType(ImageView.ScaleType.FIT_CENTER);
         image.setAdjustViewBounds(false);
         image.setContentDescription("ISM Telecom - 100% Fibra Óptica");
