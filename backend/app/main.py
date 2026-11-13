@@ -161,7 +161,7 @@ async def validar_terminal():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.11.5", "sessao_segundos": 300}
+    return {"app": "ISM Telecom", "versao": "0.11.6", "sessao_segundos": 300}
 
 
 @app.post("/api/v1/sessao/renovar",
