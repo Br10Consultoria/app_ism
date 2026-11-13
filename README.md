@@ -6,7 +6,7 @@ Aplicativo de consulta de cobranças do ERP **IXC Provedor**, destinado a termin
 - **Tela inicial:** dois botões grandes, "Quero contratar" e "Boletos e pagamentos", seguindo as referências ISM da Gertec.
 - **Faturas:** consulta CPF/CNPJ, cards vermelho (vencidas) e verde (em aberto), filtro e ações Imprimir / Enviar / Pagar.
 - **Sessão:** contador visual de 180 segundos igual à sessão real do backend, limpando dados ao expirar.
-- **Imprimir / Enviar:** usa impressão e compartilhamento padrão do Android sobre PDF seguro; **a impressora térmica interna da Gertec ainda precisa de SDK específico** e instalação de serviço compatível.
+- **Imprimir / Enviar:** impressão padrão do Android sobre PDF; na v0.11.3, **Enviar boleto** solicita o envio do e-mail pelo próprio IXC (GET `get_boleto` com `tipo_boleto=mail`), sem SMTP novo. O compartilhamento de PDF ainda está disponível na visualização do boleto. **A impressora térmica interna da Gertec ainda precisa de SDK específico**.
 
 - **Pix:** digitar CPF, escolher fatura aberta e visualizar Pix copia e cola / QR Code quando disponível no IXC.
 - **Código de barras:** digitar CPF, escolher fatura e exibir a linha digitável fornecida pelo IXC.
