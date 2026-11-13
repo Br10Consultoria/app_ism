@@ -49,6 +49,8 @@ import androidx.core.content.FileProvider;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.MultiFormatWriter;
 import com.google.zxing.common.BitMatrix;
+import com.google.zxing.integration.android.IntentIntegrator;
+import com.google.zxing.integration.android.IntentResult;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -319,8 +321,8 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Ativação única para homologação supervisionada. Nunca embutir TERMINAL_KEY
-     * no APK, nem permitir edição pelo menu depois de ativado.
+     * Ativação pela câmera, sem mostrar a chave permanente em um QR.
+     * O servidor emite um convite de uso único por cinco minutos.
      */
     private void showTerminalSetup() {
         if (terminalConfigured()) {
@@ -331,18 +333,34 @@ public class MainActivity extends Activity {
         closePdf();
         screenType = "setup";
         initScreen("Ativar terminal ISM",
-                "Configuração única. Informe a chave de terminal fornecida pelo administrador ISM.",
+                "Escaneie o QR Code enviado pelo administrador para ativar automaticamente.",
                 false);
         content.addView(label("Servidor: " + apiBase(), 13, NAVY, true),
-                margins(-1, -2, 18));
+                margins(-1, -2, 16));
+
+        Button scan = button("Escanear QR Code de ativação", CYAN, true);
+        scan.setOnClickListener(v -> scanActivationQRCode());
+        content.addView(scan, margins(-1, dp(72), 14));
+        content.addView(label(
+                "O QR Code só funciona uma vez e expira em poucos minutos. "
+                + "Peça uma nova imagem se ele já tiver sido utilizado.",
+                13, MUTED, false), margins(-1, -2, 18));
+
+        Button manual = button("Ativar digitando a chave (alternativa)", NAVY, false);
+        manual.setOnClickListener(v -> {
+            manual.setEnabled(false);
+            showManualActivationFields();
+        });
+        content.addView(manual, margins(-1, dp(52), 10));
+    }
+
+    private void showManualActivationFields() {
+        content.addView(label("Digite a chave apenas se não puder escanear o QR Code.",
+                13, MUTED, false), margins(-1, -2, 12));
         EditText credential = field("Chave de ativação do terminal",
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         credential.setSelectAllOnFocus(true);
-        content.addView(label("A chave será conferida pelo servidor antes de ser salva. " +
-                        "Depois de ativado, o campo não será exibido novamente no aplicativo.",
-                12, MUTED, false), margins(-1, -2, 16));
-
-        Button activate = button("Ativar maquininha", CYAN, true);
+        Button activate = button("Ativar maquininha com chave", NAVY, true);
         activate.setOnClickListener(v -> {
             if (loading || terminalConfigured()) return;
             String candidate = credential.getText().toString().trim();
@@ -354,6 +372,126 @@ public class MainActivity extends Activity {
             validateAndSaveTerminalKey(candidate, activate, credential);
         });
         content.addView(activate, margins(-1, dp(54), 8));
+    }
+
+    private void scanActivationQRCode() {
+        if (loading || terminalConfigured()) return;
+        if (!getPackageManager().hasSystemFeature("android.hardware.camera.any")) {
+            dialog("Esta maquineta não possui câmera disponível. Utilize a chave manual.");
+            return;
+        }
+        try {
+            new IntentIntegrator(this)
+                    .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
+                    .setBeepEnabled(false)
+                    .setOrientationLocked(true)
+                    .setPrompt("Aponte a câmera para o QR Code de ativação ISM")
+                    .initiateScan();
+        } catch (Exception error) {
+            dialog("Não foi possível abrir a câmera. Utilize a chave manual.");
+        }
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        IntentResult scanned = IntentIntegrator.parseActivityResult(
+                requestCode, resultCode, data);
+        if (scanned == null) {
+            super.onActivityResult(requestCode, resultCode, data);
+            return;
+        }
+        if (terminalConfigured() || !"setup".equals(screenType)) return;
+        String payload = scanned.getContents();
+        if (payload == null) return; // Digitalização cancelada.
+        final String prefix = "ISM-ACT1:";
+        if (!payload.startsWith(prefix)
+                || !payload.substring(prefix.length()).matches("[A-Za-z0-9_-]{43}")) {
+            dialog("QR Code inválido. Peça a imagem gerada pelo servidor ISM.");
+            return;
+        }
+        activateFromQr(payload.substring(prefix.length()));
+    }
+
+    private void activateFromQr(String code) {
+        if (loading || terminalConfigured()) return;
+        loading = true;
+        final int epoch = requestEpoch;
+        ProgressBar progress = new ProgressBar(this);
+        content.addView(progress, margins(-1, dp(45), 10));
+        executor.execute(() -> {
+            HttpURLConnection conn = null;
+            String key = "";
+            String error = "Não foi possível ativar. Verifique a conexão da maquineta.";
+            try {
+                conn = (HttpURLConnection) new URL(
+                        apiBase().replaceAll("/+$", "") + "/api/v1/terminal/ativar-qr"
+                ).openConnection();
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(15000);
+                conn.setDoOutput(true);
+                conn.setUseCaches(false);
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setRequestProperty("Accept", "application/json");
+                conn.setRequestProperty("Cache-Control", "no-store");
+                JSONObject data = new JSONObject();
+                data.put("codigo", code);
+                try (OutputStream out = conn.getOutputStream()) {
+                    out.write(data.toString().getBytes(StandardCharsets.UTF_8));
+                }
+                int status = conn.getResponseCode();
+                if (status == 200) {
+                    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                    try (InputStream input = conn.getInputStream()) {
+                        byte[] bytes = new byte[1024];
+                        int read;
+                        while ((read = input.read(bytes)) != -1) {
+                            buffer.write(bytes, 0, read);
+                            if (buffer.size() > 4096)
+                                throw new IOException("Resposta de ativação muito grande");
+                        }
+                    }
+                    JSONObject json = new JSONObject(buffer.toString("UTF-8"));
+                    if (json.optBoolean("autorizado", false)) {
+                        String secret = json.optString("terminal_key", "");
+                        if (secret.length() >= 32 && secret.length() <= 512) {
+                            key = secret;
+                        }
+                    }
+                } else if (status == 401 || status == 422) {
+                    error = "QR Code expirado, inválido ou já utilizado. Solicite um novo.";
+                } else if (status == 404) {
+                    error = "Atualize o backend ISM para v0.11.5 antes de ativar por QR.";
+                } else {
+                    error = "Servidor não autorizou a ativação (HTTP " + status + ").";
+                }
+            } catch (Exception ex) {
+                error = "Falha de conexão. Confirme a internet e o servidor ISM.";
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+            final String receivedKey = key;
+            final String failure = error;
+            ui.post(() -> {
+                if (epoch != requestEpoch) return;
+                loading = false;
+                removeProgress(progress);
+                if (receivedKey.isEmpty()) {
+                    dialog(failure);
+                    return;
+                }
+                try {
+                    TerminalKeyStore.save(this, receivedKey);
+                    if (!terminalConfigured())
+                        throw new IOException("Não foi possível conferir chave protegida");
+                    showHome();
+                    dialog("Maquineta ISM ativada automaticamente pelo QR Code!");
+                } catch (IOException ex) {
+                    dialog("Não foi possível guardar a ativação protegida neste aparelho.");
+                }
+            });
+        });
     }
 
     private void validateAndSaveTerminalKey(String candidate, Button activate, EditText entry) {
