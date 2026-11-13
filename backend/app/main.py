@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from .ixc import IXC, IXCError, digits, valid_cpf, valid_document, format_document, pick
 from .pix_confirmation import verify_pix_receipt
+from .boleto_email import registered_email, mask_email, send_pdf, BoletoEmailError
 from .commercial_leads import save_interest, claim_for_send, set_status
 from . import whatsapp_opa
 from .whatsapp_provider import (
@@ -133,7 +134,7 @@ async def validar_terminal():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.11.0", "sessao_segundos": 60}
+    return {"app": "ISM Telecom", "versao": "0.11.1", "sessao_segundos": 60}
 
 
 @app.post("/api/v1/sessao/renovar",
@@ -162,10 +163,16 @@ async def faturas(body: Lookup):
         # Nunca retornar os campos bancarios, tokens ou endereco do cadastro IXC.
         customer_name = pick(client, ("razao", "nome", "nome_razao", "fantasia"))
         cellphone = customer_phone(client)
+        email = registered_email(client)
         return {"session": create_session(client_id),
                 "cliente": {
                     "nome": customer_name[:100] or "Nome não informado pelo IXC",
                     "cpf": format_document(body.cpf)
+                },
+                "boleto_email": {
+                    "cadastrado": bool(email),
+                    "disponivel": bool(email and os.getenv("BOLETO_EMAIL_ENABLED", "").lower() in ("1", "true", "sim")),
+                    "destinatario_mascarado": mask_email(email) if email else ""
                 },
                 "whatsapp": {
                     "destinatario_mascarado": phone_mask(cellphone),
@@ -303,6 +310,40 @@ async def whatsapp_pix(invoice_id: int, body: WhatsAppRequest):
         raise HTTPException(502, "Falha ao consultar PIX ou cliente no IXC")
     except WhatsAppError as error:
         raise HTTPException(error.status_code, str(error))
+
+
+@app.post("/api/v1/faturas/{invoice_id}/enviar-email",
+          dependencies=[Depends(require_terminal), Depends(throttle)])
+async def enviar_boleto_email(invoice_id: int, body: SessionRequest):
+    """Anexa o boleto do IXC ao email já cadastrado; terminal não define destino."""
+    if invoice_id < 1:
+        raise HTTPException(404, "Cobrança inválida")
+    customer_id = read_session(body.session)
+    try:
+        ixc = IXC()
+        invoice = await ixc.invoice(invoice_id)
+        if not invoice or str(invoice.get("id_cliente")) != customer_id:
+            raise HTTPException(404, "Cobrança não encontrada para este cliente")
+        if invoice.get("status") != "A" or invoice.get("liberado") != "S":
+            raise HTTPException(409, "Cobrança não está aberta")
+        customer = await ixc.customer_by_id(customer_id)
+        if not customer or str(customer.get("id")) != customer_id:
+            raise HTTPException(404, "Cliente não encontrado no IXC")
+        email = registered_email(customer)
+        if not email:
+            raise HTTPException(422, "Cliente sem e-mail único válido cadastrado no IXC")
+        if os.getenv("BOLETO_EMAIL_ENABLED", "").lower() not in ("1", "true", "sim"):
+            raise HTTPException(503, "Envio automático de boletos não configurado no servidor")
+        boleto = await ixc.payment(invoice, "boleto")
+        pdf = boleto.get("pdf_base64", "")
+        if not pdf:
+            raise HTTPException(422, "Esta cobrança não disponibilizou PDF para envio por e-mail")
+        result = await asyncio.to_thread(send_pdf, str(invoice_id), email, pdf)
+        return {**result, "mensagem": "Solicitação aceita pelo servidor SMTP; a entrega final deve ser verificada pelo destinatário."}
+    except IXCError:
+        raise HTTPException(502, "Falha ao obter boleto ou cadastro no IXC")
+    except BoletoEmailError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
 
 
 @app.post("/api/v1/faturas/{invoice_id}/{kind}", dependencies=[Depends(require_terminal), Depends(throttle)])
