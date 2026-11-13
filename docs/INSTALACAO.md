@@ -317,7 +317,7 @@ APK baseado na branch de interface v0.11.3 com a **primeira logomarca do PDF** (
 - O GitHub Actions gera APK **debug** para teste, não assinado pela chave de produção da Gertec/MDM. Se o APK atual tiver outra assinatura, a instalação como atualização poderá falhar; para ambiente gerenciado, solicite assinatura pela mesma chave da versão instalada. Não coloque credenciais IXC no APK.
 
 
-## v0.11.5 — ativação por QR Code (sem digitar chave grande)
+## v0.11.5 — ativação por QR Code legado de uso único (substituído pela v0.11.6)
 
 **Motivo:** facilitar a ativação da maquineta Gertec pela câmera, sem colocar a `TERMINAL_KEY` permanente no QR. O convite tem 256 bits aleatórios, validade padrão de 5 minutos e **uso único**; o backend guarda apenas o SHA-256 do código em SQLite persistente.
 
@@ -348,3 +348,41 @@ Envie a imagem pelo canal interno confiável e **apague a cópia logo após a at
 - O volume Docker `ism_leads:/data` precisa ser gravável para o arquivo `terminal_activation.db`. O próprio gerador executa como usuário não privilegiado do container.
 - Este mecanismo preserva toda a interface da v0.11.4: logo do PDF, 300s, boletos, PIX e envio por e-mail IXC.
 - APK do GitHub Actions é **debug**: para sobrescrever APK da maquineta assinado pela Gertec/MDM, obtenha assinatura compatível. Caso contrário, instale em ambiente de teste ou desinstale a versão anterior, ciente de que isso pode apagar a ativação.
+
+
+## ISM v0.11.6 — UM QR COMPARTILHADO PARA TODAS AS MAQUINETAS
+
+**Nova regra:** você cria **uma única imagem** de ativação. O mesmo QR Code pode ser escaneado **em quantas maquinetas ISM forem necessárias**, sem gerar outro a cada ativação e **sem expirar automaticamente**. A imagem permanece válida até ser revogada ou substituída por você. O QR contém um código aleatório, nunca a chave permanente `TERMINAL_KEY`.
+
+No Ubuntu, com o backend **v0.11.6 instalado** e `/version` confirmando 0.11.6:
+
+```bash
+# 1) Gerar UMA VEZ; repetir este comando TROCA e invalida o QR anterior!
+docker exec -it backend-api-1 python -m app.terminal_activation --shared
+
+# 2) Copiar a imagem para o Ubuntu e guardar protegida
+docker cp backend-api-1:/tmp/ism-ativacao-compartilhada.png /home/suporte/ism-ativacao-compartilhada.png
+```
+
+Envie **o mesmo PNG** a cada técnico/cliente autorizado e escaneie em quantas maquinetas desejar. Guarde o arquivo PNG em local seguro e com acesso restrito para reutilizá-lo; não é necessário executar o comando novamente enquanto o QR anterior continuar ativo.
+
+**Consultar se o QR está ativo (sem invalidá-lo):**
+```bash
+docker exec backend-api-1 python -m app.terminal_activation --status
+```
+
+**Revogar imediatamente se a imagem for compartilhada indevidamente:**
+```bash
+docker exec backend-api-1 python -m app.terminal_activation --revoke-shared
+```
+
+**Substituir o QR antigo por outro compartilhado**: repita a geração com `--shared`; isso revoga o anterior automaticamente. A nova imagem substitui a anterior em todas as futuras instalações. As maquinetas já ativadas continuam configuradas (revogação do QR não revoga a `TERMINAL_KEY` que já está salva). Se houver suspeita de ativação não autorizada, também é necessário tratar a chave de terminal com a equipe de operação.
+
+**QR de uso único emergencial (opcional):**
+```bash
+docker exec -it backend-api-1 python -m app.terminal_activation --one-time --minutes 5 --png /tmp/ism-temporario.png
+```
+
+**Segurança:** o QR compartilhado é uma credencial de provisionamento. Quem possuir a imagem poderá tentar ativar uma maquineta enquanto o QR estiver ativo. Evite publicação em sites, grupos abertos ou repositórios. Mantenha HTTPS, limite de requisições e controles do terminal/MDM. Para revogar o QR, use o comando administrativo; o endpoint público não permite emissão ou revogação.
+
+**Interface:** Android v0.11.6 exibe "O mesmo QR Code pode ativar todas as maquinetas ISM" e mantém alternativa manual, primeira logo oficial, botões de boleto/Pix e a sessão de 300 segundos. Backend v0.11.6 deve ser instalado antes do app. O fluxo de leitura é compatível com a versão 0.11.5 (a v0.11.6 apenas atualiza mensagens na tela).
