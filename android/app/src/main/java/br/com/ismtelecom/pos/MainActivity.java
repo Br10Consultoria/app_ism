@@ -787,7 +787,7 @@ public class MainActivity extends Activity {
         LinearLayout actions = new LinearLayout(this);
         actions.setPadding(dp(8), 0, dp(8), 0);
         addCardAction(actions, "Imprimir\nboleto", () -> getBoleto(id, "imprimir"));
-        addCardAction(actions, "Enviar\nboleto", () -> getBoleto(id, "enviar"));
+        addCardAction(actions, "Enviar\nboleto", () -> confirmSendBoletoEmail(id));
         addCardAction(actions, "Pagar\nboleto", () -> showPaymentOptions(id));
         card.addView(actions);
         content.addView(card, margins(-1, -2, 14));
@@ -809,6 +809,43 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("Como deseja pagar?")
                 .setItems(new String[]{"PIX (QR Code)", "Código de barras", "Visualizar boleto PDF"},
                         (d, item) -> requestPayment(id, new String[]{"pix", "barra", "boleto"}[item]))
+                .show();
+    }
+
+    private void confirmSendBoletoEmail(String id) {
+        if (!isSessionValid()) {
+            showHome();
+            dialog("Sessão expirada. Faça nova consulta.");
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Enviar boleto por e-mail")
+                .setMessage("O boleto será enviado para o e-mail cadastrado no IXC. "
+                        + "Confirme com o cliente antes de prosseguir.")
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Enviar e-mail", (ignored, which) -> {
+                    if (!isSessionValid()) {
+                        showHome();
+                        dialog("Sessão expirada. Faça nova consulta.");
+                        return;
+                    }
+                    JSONObject request = new JSONObject();
+                    try {
+                        request.put("session", session);
+                        request.put("confirmar_envio", true);
+                    } catch (JSONException error) {
+                        dialog("Não foi possível preparar o envio.");
+                        return;
+                    }
+                    call("/api/v1/faturas/" + id + "/enviar-email", request, result -> {
+                        if (result.optBoolean("solicitacao_aceita", false)) {
+                            dialog("O IXC aceitou a solicitação de envio do boleto. "
+                                    + "A entrega depende do processamento do e-mail no IXC.");
+                        } else {
+                            dialog("O IXC não confirmou a solicitação de envio.");
+                        }
+                    });
+                })
                 .show();
     }
 
