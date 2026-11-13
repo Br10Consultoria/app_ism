@@ -40,3 +40,7 @@ Baseada na UI completa da v0.11.3 (primeira logo do PDF, botões atuais, PIX e s
 
 ### Ativação com QR Code (v0.11.5)
 Para cada nova maquineta, o administrador gera um QR de cinco minutos e **uso único** no próprio backend: `docker exec -it backend-api-1 python -m app.terminal_activation --minutes 5`. O app usa câmera integrada, valida convite no backend HTTPS e salva a chave cifrada (sem expor a TERMINAL_KEY no QR). Sem câmera/MDM, existe a opção manual. Atualize o backend antes do APK.
+
+
+### v0.11.6 — UM QR compartilhado para ativar todas as maquinetas
+Novo padrão: `docker exec -it backend-api-1 python -m app.terminal_activation --shared`. Esse comando cria um QR reutilizável para todas as maquinetas, sem expiração automática; **executá-lo novamente revoga o QR anterior**. Guarde e reenvie a mesma imagem. Estado: `--status`; revogação: `--revoke-shared`. Disponível também modo de uso único `--one-time --minutes 5`. As máquinas já ativadas permanecem ativadas após a revogação do QR. **Compartilhe o QR apenas com pessoas autorizadas.**
