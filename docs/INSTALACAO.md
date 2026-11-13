@@ -361,7 +361,8 @@ No Ubuntu, com o backend **v0.11.6 instalado** e `/version` confirmando 0.11.6:
 docker exec -it backend-api-1 python -m app.terminal_activation --shared
 
 # 2) Copiar a imagem para o Ubuntu e guardar protegida
-docker cp backend-api-1:/tmp/ism-ativacao-compartilhada.png /home/suporte/ism-ativacao-compartilhada.png
+docker cp backend-api-1:/data/ism-ativacao-compartilhada.png /home/suporte/ism-ativacao-compartilhada.png
+chmod 600 /home/suporte/ism-ativacao-compartilhada.png
 ```
 
 Envie **o mesmo PNG** a cada técnico/cliente autorizado e escaneie em quantas maquinetas desejar. Guarde o arquivo PNG em local seguro e com acesso restrito para reutilizá-lo; não é necessário executar o comando novamente enquanto o QR anterior continuar ativo.
@@ -386,3 +387,7 @@ docker exec -it backend-api-1 python -m app.terminal_activation --one-time --min
 **Segurança:** o QR compartilhado é uma credencial de provisionamento. Quem possuir a imagem poderá tentar ativar uma maquineta enquanto o QR estiver ativo. Evite publicação em sites, grupos abertos ou repositórios. Mantenha HTTPS, limite de requisições e controles do terminal/MDM. Para revogar o QR, use o comando administrativo; o endpoint público não permite emissão ou revogação.
 
 **Interface:** Android v0.11.6 exibe "O mesmo QR Code pode ativar todas as maquinetas ISM" e mantém alternativa manual, primeira logo oficial, botões de boleto/Pix e a sessão de 300 segundos. Backend v0.11.6 deve ser instalado antes do app. O fluxo de leitura é compatível com a versão 0.11.5 (a v0.11.6 apenas atualiza mensagens na tela).
+
+
+### Correção v0.11.6: arquivo QR persistente
+O PNG compartilhado agora é salvo, **por padrão**, em `/data/ism-ativacao-compartilhada.png`, volume persistente do container. O caminho antigo `/tmp/ism-ativacao-compartilhada.png` podia desaparecer após reinício/recriação do contêiner. O QR gerado antes do ajuste deve ser substituído **uma única vez** com `--shared`, que revoga o anterior; em seguida, copie o arquivo de `/data`. Com backend antigo v0.11.6, o mesmo comportamento já pode ser obtido passando explicitamente `--png /data/ism-ativacao-compartilhada.png`. Consultar com `--status` não gira nem revoga QR.
