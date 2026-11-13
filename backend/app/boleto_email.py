@@ -164,3 +164,35 @@ def send_pdf(invoice_id, email, pdf_base64):
                              (state, int(time.time()), str(invoice_id)))
         finally:
             conn.close()
+
+
+def reserve_ixc_send(invoice_id):
+    """Evita envio duplicado pela API IXC por 5 min, inclusive após timeout incerto.
+
+    Usa DB já persistido em /data, mas NÃO requer configuração SMTP do aplicativo.
+    """
+    ident = str(invoice_id)
+    if not re.fullmatch(r"[1-9][0-9]{0,14}", ident):
+        raise BoletoEmailError("Cobrança inválida")
+    now = int(time.time())
+    with _LOCK:
+        conn = _connection()
+        try:
+            with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT state,updated FROM boleto_send_attempts WHERE invoice_id=?",
+                    (ident,),
+                ).fetchone()
+                if row and now - row[1] < 300:
+                    raise BoletoEmailError(
+                        "Solicitação recente desta fatura. Confira o e-mail ou log do IXC "
+                        "antes de tentar novamente.", 409
+                    )
+                conn.execute(
+                    "INSERT INTO boleto_send_attempts(invoice_id,state,updated) VALUES(?,?,?) "
+                    "ON CONFLICT(invoice_id) DO UPDATE SET state=excluded.state,updated=excluded.updated",
+                    (ident, "solicitado_ixc", now),
+                )
+        finally:
+            conn.close()
