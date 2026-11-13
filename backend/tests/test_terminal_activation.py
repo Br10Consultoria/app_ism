@@ -75,3 +75,72 @@ def test_server_cannot_activate_if_terminal_secret_missing(monkeypatch, tmp_path
     response = client.post("/api/v1/terminal/ativar-qr", json={"codigo": code})
     assert response.status_code == 503
     assert "terminal_key" not in response.text
+
+
+def test_shared_qr_can_activate_many_devices(monkeypatch, tmp_path):
+    configure(monkeypatch, tmp_path)
+    shared = activation.issue_shared()
+    assert shared.startswith(activation.PREFIX)
+    assert TEST_KEY not in shared
+    code = shared[len(activation.PREFIX):]
+    assert len(code) == 43
+    for _ in range(5):
+        response = client.post("/api/v1/terminal/ativar-qr", json={"codigo": code})
+        assert response.status_code == 200
+        assert response.json()["autorizado"] is True
+    with sqlite3.connect(activation.db_path()) as conn:
+        stored = conn.execute(
+            "SELECT code_sha256 FROM terminal_shared_activation WHERE id=1"
+        ).fetchone()[0]
+    assert stored == activation._digest(code)
+    assert code != stored
+
+
+def test_shared_qr_survives_time_and_remains_active(monkeypatch, tmp_path):
+    configure(monkeypatch, tmp_path)
+    payload = activation.issue_shared()
+    code = payload[len(activation.PREFIX):]
+    now = int(activation.time.time())
+    monkeypatch.setattr(activation.time, "time", lambda: now + 60 * 60 * 24 * 180)
+    assert client.post("/api/v1/terminal/ativar-qr", json={"codigo": code}).status_code == 200
+    assert activation.shared_status()["ativo"] is True
+
+
+def test_rotate_replaces_old_shared_qr(monkeypatch, tmp_path):
+    configure(monkeypatch, tmp_path)
+    original = activation.issue_shared()
+    new = activation.issue_shared()
+    assert original != new
+    first_code = original[len(activation.PREFIX):]
+    second_code = new[len(activation.PREFIX):]
+    assert client.post("/api/v1/terminal/ativar-qr", json={"codigo": first_code}).status_code == 401
+    assert client.post("/api/v1/terminal/ativar-qr", json={"codigo": second_code}).status_code == 200
+    assert client.post("/api/v1/terminal/ativar-qr", json={"codigo": second_code}).status_code == 200
+
+
+def test_shared_qr_can_be_revoked(monkeypatch, tmp_path):
+    configure(monkeypatch, tmp_path)
+    code = activation.issue_shared()[len(activation.PREFIX):]
+    assert activation.shared_status()["ativo"] is True
+    assert activation.revoke_shared() is True
+    assert activation.revoke_shared() is False
+    assert activation.shared_status()["ativo"] is False
+    assert client.post("/api/v1/terminal/ativar-qr", json={"codigo": code}).status_code == 401
+
+
+def test_legacy_one_time_qr_still_single_use_with_shared_enabled(monkeypatch, tmp_path):
+    configure(monkeypatch, tmp_path)
+    shared = activation.issue_shared()[len(activation.PREFIX):]
+    one_time = activation.issue()[0][len(activation.PREFIX):]
+    assert client.post("/api/v1/terminal/ativar-qr", json={"codigo": one_time}).status_code == 200
+    assert client.post("/api/v1/terminal/ativar-qr", json={"codigo": one_time}).status_code == 401
+    assert client.post("/api/v1/terminal/ativar-qr", json={"codigo": shared}).status_code == 200
+
+
+def test_shared_qr_rejects_disabled_terminal_key(monkeypatch, tmp_path):
+    configure(monkeypatch, tmp_path)
+    code = activation.issue_shared()[len(activation.PREFIX):]
+    monkeypatch.setenv("TERMINAL_KEY", "")
+    denied = client.post("/api/v1/terminal/ativar-qr", json={"codigo": code})
+    assert denied.status_code == 503
+    assert "terminal_key" not in denied.text
