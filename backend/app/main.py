@@ -18,10 +18,12 @@ from urllib.parse import urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .ixc import IXC, IXCError, digits, valid_cpf, valid_document, format_document, pick
 from .pix_confirmation import verify_pix_receipt
+from .terminal_activation import redeem, ActivationError
 from .boleto_email import registered_email, mask_email, reserve_ixc_send, BoletoEmailError
 from .commercial_leads import save_interest, claim_for_send, set_status
 from . import whatsapp_opa
@@ -33,6 +35,10 @@ from .whatsapp_provider import (
 app = FastAPI(title="ISM Telecom — API do Terminal", docs_url=None, redoc_url=None)
 rate_lock = Lock()
 attempts = defaultdict(deque)
+
+
+class QRActivationRequest(BaseModel):
+    codigo: str = Field(min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]{43}$")
 
 
 class Lookup(BaseModel):
@@ -128,6 +134,23 @@ async def health():
     return {"status": "ok"}
 
 
+@app.post("/api/v1/terminal/ativar-qr", dependencies=[Depends(throttle)])
+async def ativar_qr(body: QRActivationRequest):
+    """Troca convite de uso único por uma chave protegida, sempre via TLS."""
+    key = os.getenv("TERMINAL_KEY", "")
+    if not 32 <= len(key) <= 512:
+        raise HTTPException(503, "Ativação ainda não configurada no servidor")
+    try:
+        if not redeem(body.codigo):
+            raise HTTPException(401, "QR inválido, expirado ou já utilizado. Solicite outro.")
+    except (ActivationError, OSError, sqlite3.Error):
+        raise HTTPException(503, "Serviço de ativação indisponível")
+    return JSONResponse(
+        {"autorizado": True, "terminal_key": key},
+        headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
+    )
+
+
 @app.post("/api/v1/terminal/validar",
           dependencies=[Depends(require_terminal), Depends(throttle)])
 async def validar_terminal():
@@ -138,7 +161,7 @@ async def validar_terminal():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.11.4", "sessao_segundos": 300}
+    return {"app": "ISM Telecom", "versao": "0.11.5", "sessao_segundos": 300}
 
 
 @app.post("/api/v1/sessao/renovar",
