@@ -315,3 +315,36 @@ APK baseado na branch de interface v0.11.3 com a **primeira logomarca do PDF** (
 - O backend usa `BOLETO_EMAIL_DB` (padrão `/data/boleto_email.db`) para impedir solicitações duplicadas por 300 segundos, mesmo após timeout. O volume Docker precisa ter permissão de escrita.
 - Atualize primeiro o backend para **0.11.4**, depois instale o APK **0.11.4**. Confirme `GET /version` com `{"versao":"0.11.4","sessao_segundos":300}`.
 - O GitHub Actions gera APK **debug** para teste, não assinado pela chave de produção da Gertec/MDM. Se o APK atual tiver outra assinatura, a instalação como atualização poderá falhar; para ambiente gerenciado, solicite assinatura pela mesma chave da versão instalada. Não coloque credenciais IXC no APK.
+
+
+## v0.11.5 — ativação por QR Code (sem digitar chave grande)
+
+**Motivo:** facilitar a ativação da maquineta Gertec pela câmera, sem colocar a `TERMINAL_KEY` permanente no QR. O convite tem 256 bits aleatórios, validade padrão de 5 minutos e **uso único**; o backend guarda apenas o SHA-256 do código em SQLite persistente.
+
+### Procedimento do administrador (Ubuntu, dentro do servidor ISM)
+1. Atualize primeiro o backend para v0.11.5 e confirme `curl -fsS https://app.ismtelecom.com.br/version` (deve mostrar `"versao":"0.11.5"`). Execute a partir do diretório `/home/suporte/app_ism/backend`, **após** integrar a branch validada:
+```bash
+cd /home/suporte/app_ism/backend
+docker compose up -d --build
+docker ps --format 'table {{.Names}}\t{{.Status}}'
+```
+2. Quando o cliente estiver pronto para escanear, gere **um QR para cada maquineta**:
+```bash
+docker exec -it backend-api-1 python -m app.terminal_activation --minutes 5
+```
+O terminal exibe o desenho do QR e grava um PNG temporário em `/tmp/ism-ativacao.png` dentro do container. Você pode tirar foto da tela do terminal para enviar ao cliente ou extrair o PNG:
+```bash
+docker cp backend-api-1:/tmp/ism-ativacao.png /home/suporte/ism-ativacao.png
+```
+Envie a imagem pelo canal interno confiável e **apague a cópia logo após a ativação**; não a deixe em páginas públicas nem repositórios. Se o QR expirar ou já tiver sido usado, gere outro. O código não contém a chave permanente.
+3. Na maquineta, instale o APK v0.11.5, abra o app e toque em **Escanear QR Code de ativação**. A câmera é integrada ao aplicativo (pode requerer liberação de câmera no MDM). Aponte para a imagem exibida no outro celular/computador. A ativação salva a credencial de forma cifrada no Android Keystore. **Não precisa digitar a chave**.
+4. Se a câmera não puder ser utilizada, selecione **Ativar digitando a chave (alternativa)**; a ativação manual anterior continua disponível.
+
+### Funcionamento e segurança
+- O app **não usa URL do QR**: aceita somente `ISM-ACT1:` seguido de 43 caracteres de convite aleatório. Comunica-se exclusivamente com o `API_BASE` HTTPS definido no APK.
+- A API `POST /api/v1/terminal/ativar-qr` aceita `{"codigo":"<43 caracteres>"}`, exige convite válido, não expirado e ainda não consumido, e somente então retorna a chave do terminal **por HTTPS**. Usa `Cache-Control: no-store` e a proteção de requisições existente.
+- Um QR capturado pode ser utilizado por quem o receber **antes** do verdadeiro cliente; compartilhe diretamente com o responsável quando estiver pronto para escanear. Não envie a senha permanente.
+- O usuário não precisa informar `IXC_TOKEN`; a chave de terminal permanece no backend e depois no Android Keystore.
+- O volume Docker `ism_leads:/data` precisa ser gravável para o arquivo `terminal_activation.db`. O próprio gerador executa como usuário não privilegiado do container.
+- Este mecanismo preserva toda a interface da v0.11.4: logo do PDF, 300s, boletos, PIX e envio por e-mail IXC.
+- APK do GitHub Actions é **debug**: para sobrescrever APK da maquineta assinado pela Gertec/MDM, obtenha assinatura compatível. Caso contrário, instale em ambiente de teste ou desinstale a versão anterior, ciente de que isso pode apagar a ativação.
