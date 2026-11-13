@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from .ixc import IXC, IXCError, digits, valid_cpf, valid_document, format_document, pick
 from .pix_confirmation import verify_pix_receipt
+from .boleto_email import registered_email, mask_email, reserve_ixc_send, BoletoEmailError
 from .commercial_leads import save_interest, claim_for_send, set_status
 from . import whatsapp_opa
 from .whatsapp_provider import (
@@ -40,6 +41,10 @@ class Lookup(BaseModel):
 
 class SessionRequest(BaseModel):
     session: str = Field(min_length=15, max_length=1500)
+
+
+class BoletoEmailRequest(SessionRequest):
+    confirmar_envio: bool = False
 
 
 class WhatsAppRequest(SessionRequest):
@@ -88,7 +93,7 @@ def secret():
 
 
 def create_session(customer_id):
-    payload = {"id": str(customer_id), "exp": int(time.time()) + 60}
+    payload = {"id": str(customer_id), "exp": int(time.time()) + 300}
     encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
     signature = hmac.new(secret(), encoded.encode(), hashlib.sha256).hexdigest()
     return encoded + "." + signature
@@ -133,15 +138,15 @@ async def validar_terminal():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.11.0", "sessao_segundos": 60}
+    return {"app": "ISM Telecom", "versao": "0.11.4", "sessao_segundos": 300}
 
 
 @app.post("/api/v1/sessao/renovar",
           dependencies=[Depends(require_terminal), Depends(throttle)])
 async def renovar_sessao(body: SessionRequest):
-    """Renova por mais 60s somente mediante acao do operador e token ainda valido."""
+    """Renova por mais 300s somente mediante acao do operador e token ainda valido."""
     client_id = read_session(body.session)
-    return {"session": create_session(client_id), "sessao_segundos": 60}
+    return {"session": create_session(client_id), "sessao_segundos": 300}
 
 
 @app.post("/api/v1/faturas", dependencies=[Depends(require_terminal), Depends(throttle)])
@@ -162,10 +167,16 @@ async def faturas(body: Lookup):
         # Nunca retornar os campos bancarios, tokens ou endereco do cadastro IXC.
         customer_name = pick(client, ("razao", "nome", "nome_razao", "fantasia"))
         cellphone = customer_phone(client)
+        email = registered_email(client)
         return {"session": create_session(client_id),
                 "cliente": {
                     "nome": customer_name[:100] or "Nome não informado pelo IXC",
                     "cpf": format_document(body.cpf)
+                },
+                "boleto_email": {
+                    "cadastrado": bool(email),
+                    "disponivel": bool(email),
+                    "destinatario_mascarado": mask_email(email) if email else ""
                 },
                 "whatsapp": {
                     "destinatario_mascarado": phone_mask(cellphone),
@@ -303,6 +314,43 @@ async def whatsapp_pix(invoice_id: int, body: WhatsAppRequest):
         raise HTTPException(502, "Falha ao consultar PIX ou cliente no IXC")
     except WhatsAppError as error:
         raise HTTPException(error.status_code, str(error))
+
+
+@app.post("/api/v1/faturas/{invoice_id}/enviar-email",
+          dependencies=[Depends(require_terminal), Depends(throttle)])
+async def enviar_boleto_email(invoice_id: int, body: BoletoEmailRequest):
+    """Envia pelo próprio IXC, usando o e-mail existente no cadastro e SMTP do ERP."""
+    if invoice_id < 1:
+        raise HTTPException(404, "Cobrança inválida")
+    if not body.confirmar_envio:
+        raise HTTPException(422, "Confirme o envio do boleto ao e-mail cadastrado no IXC")
+    customer_id = read_session(body.session)
+    try:
+        ixc = IXC()
+        invoice = await ixc.invoice(invoice_id)
+        if not invoice or str(invoice.get("id_cliente")) != customer_id:
+            raise HTTPException(404, "Cobrança não encontrada para este cliente")
+        if invoice.get("status") != "A" or invoice.get("liberado") != "S":
+            raise HTTPException(409, "Cobrança não está aberta")
+        customer = await ixc.customer_by_id(customer_id)
+        if not customer or str(customer.get("id")) != customer_id:
+            raise HTTPException(404, "Cliente não encontrado no IXC")
+        email = registered_email(customer)
+        if not email:
+            raise HTTPException(422, "Cliente sem e-mail único válido cadastrado no IXC")
+
+        # Impede que toques duplos ou timeout gerem vários envios iguais.
+        reserve_ixc_send(invoice_id)
+        result = await ixc.send_boleto_email(invoice_id)
+        return {
+            **result,
+            "destinatario_mascarado": mask_email(email),
+            "mensagem": "Solicitação aceita pela API do IXC; a entrega não foi confirmada."
+        }
+    except IXCError:
+        raise HTTPException(502, "IXC não confirmou a solicitação de e-mail; confira o log antes de tentar novamente")
+    except BoletoEmailError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
 
 
 @app.post("/api/v1/faturas/{invoice_id}/{kind}", dependencies=[Depends(require_terminal), Depends(throttle)])
