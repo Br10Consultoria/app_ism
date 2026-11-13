@@ -883,9 +883,10 @@ public class MainActivity extends Activity {
                 File dir = new File(getCacheDir(), "boletos");
                 if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("Cache indisponível");
                 tempPdf = new File(dir, "codigo_barras_temporario.pdf");
-                // CODE_128 permite codificar os 44 algarismos do boleto em barras.
+                // Boletos bancários e de arrecadação utilizam Interleaved 2 of 5 (ITF).
+                // CODE_128 não deve ser usado para representar a barra de boleto.
                 BitMatrix bits = new MultiFormatWriter().encode(
-                        number, BarcodeFormat.CODE_128, 680, 150);
+                        number, BarcodeFormat.ITF, 680, 150);
                 Bitmap barcode = Bitmap.createBitmap(bits.getWidth(), bits.getHeight(),
                         Bitmap.Config.ARGB_8888);
                 for (int x = 0; x < bits.getWidth(); x++) {
