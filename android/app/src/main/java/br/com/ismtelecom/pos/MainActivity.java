@@ -192,65 +192,15 @@ public class MainActivity extends Activity {
         content.addView(b, margins(-1, dp(53), 12));
     }
 
-    /** Marca ISM desenhada em vetor: o antigo ism_logo.png do APK está truncado. */
+    /** Logo oficial: proporção original e sem desenho manual inclinado. */
     private View logo(int height) {
-        return new View(this) {
-            private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-
-            @Override protected void onDraw(Canvas canvas) {
-                super.onDraw(canvas);
-                float width = getWidth(), fullHeight = getHeight();
-                float scale = Math.min((width - dp(8)) / 250f,
-                                       (fullHeight - dp(4)) / 105f);
-                if (scale <= 0f) return;
-                canvas.save();
-                canvas.translate((width - 250f * scale) / 2f,
-                                 (fullHeight - 105f * scale) / 2f);
-                canvas.scale(scale, scale);
-
-                // Velocímetro em azul, como na marca ISM Telecom.
-                paint.setStyle(Paint.Style.STROKE);
-                paint.setStrokeCap(Paint.Cap.ROUND);
-                paint.setStrokeWidth(8.2f);
-                paint.setColor(Color.rgb(24, 128, 180));
-                canvas.drawArc(new RectF(8, 9, 114, 116), 196f, 135f, false, paint);
-
-                paint.setStrokeWidth(4f);
-                paint.setColor(Color.rgb(53, 178, 202));
-                canvas.drawArc(new RectF(21, 22, 101, 102), 195f, 128f, false, paint);
-
-                paint.setStyle(Paint.Style.FILL);
-                paint.setColor(Color.rgb(9, 79, 131));
-                for (int i = 0; i < 7; i++) {
-                    float angle = (float) Math.toRadians(209f + i * 15.5f);
-                    float radius = 46f;
-                    float cx = 61f + (float) Math.cos(angle) * radius;
-                    float cy = 63f + (float) Math.sin(angle) * radius;
-                    canvas.drawCircle(cx, cy, 2.2f, paint);
-                }
-
-                paint.setColor(Color.rgb(194, 52, 74));
-                paint.setStrokeWidth(2.9f);
-                paint.setStyle(Paint.Style.STROKE);
-                canvas.drawLine(68f, 57f, 99f, 27f, paint);
-
-                paint.setStyle(Paint.Style.FILL);
-                paint.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
-                paint.setTextSize(46f);
-                paint.setColor(Color.rgb(47, 146, 175));
-                canvas.drawText("ISM", 79f, 66f, paint);
-
-                paint.setTextSize(24f);
-                paint.setColor(Color.rgb(7, 66, 119));
-                canvas.drawText("Telecom", 91f, 90f, paint);
-
-                paint.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-                paint.setTextSize(10.5f);
-                paint.setColor(Color.rgb(60, 156, 174));
-                canvas.drawText("100% Fibra Óptica", 91f, 102f, paint);
-                canvas.restore();
-            }
-        };
+        ImageView image = new ImageView(this);
+        image.setImageBitmap(IsmOfficialLogo.decode());
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setAdjustViewBounds(false);
+        image.setContentDescription("ISM Telecom - 100% Fibra Óptica");
+        image.setPadding(dp(3), dp(3), dp(3), dp(3));
+        return image;
     }
 
     private void initScreen(String title, String subtitle, boolean back) {
@@ -273,9 +223,9 @@ public class MainActivity extends Activity {
             header.addView(goBack, new LinearLayout.LayoutParams(dp(79), dp(58)));
         }
         // Na tela inicial a marca ocupa toda a largura disponível.
-        View brand = logo(back ? 64 : 144);
+        View brand = logo(back ? 72 : 176);
         LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(
-                0, dp(back ? 64 : 144), 1);
+                0, dp(back ? 72 : 176), 1);
         header.addView(brand, logoParams);
         if (back) {
             TextView home = label("⌂ Início", 13, NAVY, true);
