@@ -292,3 +292,16 @@ Esta opção não usa WhatsApp instalado na maquininha e não requer credenciais
 A API do Opa documenta `openCustomerService: true` no envio de template: https://api.opasuite.com.br/. Configure o modelo para a finalidade correta, consulte status e permissões antes do primeiro teste real. Não use `data_cake` (boas-vindas a assinantes) para interessados.
 
 Atualização: `git switch main && git pull --ff-only origin main`; `cd backend && docker compose up -d --build`; conferir `GET /version = 0.11.0`; instalar APK v0.11.
+
+
+## ISM v0.11.3 — envio de boleto pelo e-mail configurado no IXC
+
+O botão **Enviar boleto** na lista de faturas passou a solicitar envio nativo pelo IXC, sem exigir aplicativo de e-mail no terminal e sem configurar SMTP adicional no backend ISM.
+
+- O Android exibe confirmação explícita e chama `POST /api/v1/faturas/{id}/enviar-email` com `{"session":"<sessão temporária>","confirmar_envio":true}`.
+- O backend verifica chave do terminal, sessão de 60 segundos, titularidade e título aberto/liberado. As credenciais do IXC nunca saem do backend.
+- O backend consulta `GET /webservice/v1/get_boleto` com corpo JSON `{"boletos":"<id>","juro":"N","multa":"N","atualiza_boleto":"N","tipo_boleto":"mail"}` e `ixcsoft: listar`. O método GET com corpo JSON foi homologado pelo CLI do IXC da ISM (HTTP 200, `{"registros":[{"sucesso":true}]}`).
+- Só considera a solicitação **aceita** quando o IXC retorna `registros[*].sucesso === true`. **Não confunde aceitação com entrega.** Verifique a fila/log do IXC e a caixa postal de destino.
+- O download/visualização do PDF continua utilizando o POST do IXC em `tipo_boleto=arquivo`; a impressão e o compartilhamento Android por PDF continuam disponíveis nas respectivas ações, sem alterações no SMTP usado opcionalmente para contatos comerciais.
+- Envie somente faturas autorizadas e confirme que o e-mail de destino está cadastrado corretamente no IXC. Para acesso público não supervisionado, acrescente autenticação forte do titular (CPF isolado não autentica).
+- O novo backend precisa estar instalado antes do APK 0.11.3. Confirme `GET /version` exibindo `0.11.3`; caso contrário, o botão retornará 404.
