@@ -176,12 +176,16 @@ def main():
     parser.add_argument("--minutes", type=int, default=None,
                         help="Validade de 1 a 15 minutos, somente com --one-time")
     parser.add_argument(
-        "--png", default="/tmp/ism-ativacao-compartilhada.png",
-        help="Caminho do PNG no container (padrão /tmp/ism-ativacao-compartilhada.png)",
+        "--png", default=None,
+        help="Destino do PNG: por padrão /data/ism-ativacao-compartilhada.png; "
+             "com --one-time, /tmp/ism-temporario.png",
     )
     parser.add_argument("--no-ascii", action="store_true",
                         help="Não imprimir QR Code no terminal")
     args = parser.parse_args()
+    if args.png is None:
+        args.png = ("/tmp/ism-temporario.png" if args.one_time
+                    else "/data/ism-ativacao-compartilhada.png")
 
     try:
         if not args.revoke_shared and not args.status:
