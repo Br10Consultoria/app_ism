@@ -292,3 +292,14 @@ Esta opção não usa WhatsApp instalado na maquininha e não requer credenciais
 A API do Opa documenta `openCustomerService: true` no envio de template: https://api.opasuite.com.br/. Configure o modelo para a finalidade correta, consulte status e permissões antes do primeiro teste real. Não use `data_cake` (boas-vindas a assinantes) para interessados.
 
 Atualização: `git switch main && git pull --ff-only origin main`; `cd backend && docker compose up -d --build`; conferir `GET /version = 0.11.0`; instalar APK v0.11.
+
+## ISM v0.11.2 — sessão de 5 minutos, logomarca oficial e impressora Gertec (2026-11-13)
+
+- Backend **e** APK Android precisam ser atualizados de forma coordenada. O token de consulta agora é válido por **300 segundos** (`create_session` e `/api/v1/sessao/renovar`), e a contagem do aplicativo também usa **300000ms**. Atualizar só o APK deixa o backend anterior expirar em 60s.
+- `GET /version` deve retornar `{"app":"ISM Telecom","versao":"0.11.2","sessao_segundos":300}`.
+- O logo foi extraído da **segunda página** do PDF oficial `ISM Telecom_logo.pdf`: aplicado proporcionalmente como bitmap, sem distorção das letras e sem redesenho. O arquivo de fonte PDF não precisa ir para a maquininha; a arte PNG fica embutida no APK.
+- `Imprimir código`: API **já existente do IXC** `/webservice/v1/fn_areceber` e `get_boleto` (linha digitável quando necessária), via rota ISM `/api/v1/faturas/{id}/barra`, e geração de barras ITF (2 de 5 intercalado) no Android. NÃO depende de uma API do IXC para imprimir; IXC entrega dados, Gertec faz a impressão.
+- **Não existe ainda integração comprovada com a impressora térmica interna GPOS780.** A v0.11.2 verifica suporte de impressão Android e usa `PrintManager`, que abre a interface do sistema para selecionar impressora. Nem toda SmartPOS expõe a térmica por esse serviço. Se não aparecer/imprimir, solicitar **SDK ou serviço de impressão para GPOS780** ao fornecedor responsável, com documentação/versão compatível e, quando aplicável, bibliotecas do fabricante; não inventar nomes de pacotes AIDL/Intent.
+- O envio automático do boleto por e-mail do IXC continua dependendo do **SMTP institucional** configurado no backend (`BOLETO_EMAIL_ENABLED=true` e dados SMTP válidos); a API de emissão de boleto não é uma API de envio de e-mail.
+- Assinatura: CI produz APK **debug**. A empresa que gerencia GPOS780 deverá assinar/distribuir a atualização com a **mesma identidade de assinatura Android** usada na instalação anterior. Não desinstalar a versão existente para contornar `INSTALL_FAILED_UPDATE_INCOMPATIBLE` sem preservar a ativação.
+- Testes previstos na maquininha: login, consultar CPF, observar contador 300s, voltar/home, logo sem inclinação, barras impressas e escaneáveis, QR PIX, e-mail cadastrado. Validar impressão física na bobina; compilação CI sozinha **não** garante essa capacidade.
