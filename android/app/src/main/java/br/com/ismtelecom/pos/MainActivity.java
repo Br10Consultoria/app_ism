@@ -80,7 +80,7 @@ public class MainActivity extends Activity {
     private static final int MUTED = Color.rgb(103, 126, 143);
     private static final int GREEN = Color.rgb(58, 169, 109);
     private static final int RED = Color.rgb(202, 66, 103);
-    private static final long SESSION_MILLIS = 60_000L; // Mesmo TTL do backend.
+    private static final long SESSION_MILLIS = 300_000L; // Mesmo TTL do backend: 5 minutos.
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler ui = new Handler(Looper.getMainLooper());
     private LinearLayout content;
