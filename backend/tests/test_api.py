@@ -340,7 +340,7 @@ def test_session_explicit_renewal_and_auth_required():
     assert client.post(url, json={"session": original}).status_code == 401
     response = client.post(url, headers=headers, json={"session": original})
     assert response.status_code == 200
-    assert response.json()["sessao_segundos"] == 60
+    assert response.json()["sessao_segundos"] == 300
     assert read_session(response.json()["session"]) == "123"
     assert client.post(url, headers=headers, json={"session": "not-a-signed-token"}).status_code in (401, 422)
 
