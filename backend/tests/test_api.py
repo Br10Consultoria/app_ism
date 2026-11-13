@@ -297,7 +297,7 @@ def test_backend_version_and_short_session_ttl():
     version = client.get("/version")
     assert version.status_code == 200
     assert version.json() == {
-        "app": "ISM Telecom", "versao": "0.11.0", "sessao_segundos": 60
+        "app": "ISM Telecom", "versao": "0.11.3", "sessao_segundos": 60
     }
 
     token = create_session("123")
@@ -387,3 +387,103 @@ def test_terminal_activation_validates_key_without_sensitive_data():
                          headers={"X-Terminal-Key": "invalid"}, json={})
     assert denied.status_code == 401
     assert "terminal" not in good.text.lower() or "autorizado" in good.text.lower()
+
+
+def test_ixc_send_boleto_email_get_json_and_success(monkeypatch):
+    import asyncio
+    import httpx
+    from app.ixc import IXC
+
+    monkeypatch.setenv("IXC_URL", "https://ixc.example.test")
+    monkeypatch.setenv("IXC_USER_ID", "test")
+    monkeypatch.setenv("IXC_TOKEN", "secret-test")
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            pass
+
+        async def request(self, method, url, json, headers):
+            assert method == "GET"
+            assert url.endswith("/webservice/v1/get_boleto")
+            assert headers["ixcsoft"] == "listar"
+            assert headers["Authorization"].startswith("Basic ")
+            assert json == {
+                "boletos": "443303",
+                "juro": "N",
+                "multa": "N",
+                "atualiza_boleto": "N",
+                "tipo_boleto": "mail"
+            }
+            return httpx.Response(
+                200, request=httpx.Request(method, url),
+                headers={"Content-Type": "text/html; charset=ISO-8859-1"},
+                content=b'{"registros":[{"sucesso":true}]}'
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    result = asyncio.run(IXC().send_boleto_email("443303"))
+    assert result == {"solicitacao_aceita": True, "entrega_confirmada": False}
+
+
+def test_ixc_send_boleto_email_does_not_claim_delivery_on_false(monkeypatch):
+    import asyncio
+    from app.ixc import IXC, IXCError
+
+    monkeypatch.setenv("IXC_URL", "https://ixc.example.test")
+    monkeypatch.setenv("IXC_USER_ID", "test")
+    monkeypatch.setenv("IXC_TOKEN", "secret-test")
+
+    async def fake_request(self, path, body, **kwargs):
+        return {"registros": [{"sucesso": False}]}
+
+    monkeypatch.setattr(IXC, "request", fake_request)
+    with pytest.raises(IXCError):
+        asyncio.run(IXC().send_boleto_email("443303"))
+    with pytest.raises(IXCError):
+        asyncio.run(IXC().send_boleto_email("../443303"))
+
+
+def test_api_boleto_email_requires_confirmation_and_invoice_owner(monkeypatch):
+    from app import main as module
+
+    sent = []
+
+    class FakeIXC:
+        async def invoice(self, invoice_id):
+            if invoice_id == 10:
+                return {"id": "10", "id_cliente": "123", "status": "A", "liberado": "S"}
+            if invoice_id == 11:
+                return {"id": "11", "id_cliente": "123", "status": "R", "liberado": "S"}
+            return None
+
+        async def send_boleto_email(self, invoice_id):
+            sent.append(invoice_id)
+            return {"solicitacao_aceita": True, "entrega_confirmada": False}
+
+    monkeypatch.setattr(module, "IXC", FakeIXC)
+    endpoint = "/api/v1/faturas/10/enviar-email"
+    request = {"session": create_session("123"), "confirmar_envio": True}
+    assert client.post(endpoint, json=request).status_code == 401
+    assert client.post(endpoint, json={
+        **request, "confirmar_envio": False
+    }, headers=headers).status_code == 422
+    assert client.post(endpoint, json={
+        "session": create_session("999"), "confirmar_envio": True
+    }, headers=headers).status_code == 404
+    assert client.post("/api/v1/faturas/11/enviar-email",
+                       json=request, headers=headers).status_code == 409
+    assert sent == []
+
+    accepted = client.post(endpoint, json=request, headers=headers)
+    assert accepted.status_code == 200
+    assert accepted.json()["solicitacao_aceita"] is True
+    assert accepted.json()["entrega_confirmada"] is False
+    assert "entrega deve ser conferida" in accepted.json()["mensagem"]
+    assert sent == [10]
+    assert "@" not in accepted.text
