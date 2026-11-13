@@ -297,14 +297,14 @@ def test_backend_version_and_short_session_ttl():
     version = client.get("/version")
     assert version.status_code == 200
     assert version.json() == {
-        "app": "ISM Telecom", "versao": "0.11.1", "sessao_segundos": 60
+        "app": "ISM Telecom", "versao": "0.11.2", "sessao_segundos": 300
     }
 
     token = create_session("123")
     encoded = token.split(".", 1)[0]
     payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
     assert payload["id"] == "123"
-    assert 59 <= payload["exp"] - int(time.time()) <= 61
+    assert 299 <= payload["exp"] - int(time.time()) <= 301
     assert read_session(token) == "123"
 
 
