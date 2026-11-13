@@ -303,3 +303,15 @@ Atualização: `git switch main && git pull --ff-only origin main`; `cd backend 
 - O envio automático do boleto por e-mail do IXC continua dependendo do **SMTP institucional** configurado no backend (`BOLETO_EMAIL_ENABLED=true` e dados SMTP válidos); a API de emissão de boleto não é uma API de envio de e-mail.
 - Assinatura: CI produz APK **debug**. A empresa que gerencia GPOS780 deverá assinar/distribuir a atualização com a **mesma identidade de assinatura Android** usada na instalação anterior. Não desinstalar a versão existente para contornar `INSTALL_FAILED_UPDATE_INCOMPATIBLE` sem preservar a ativação.
 - Testes previstos na maquininha: login, consultar CPF, observar contador 300s, voltar/home, logo sem inclinação, barras impressas e escaneáveis, QR PIX, e-mail cadastrado. Validar impressão física na bobina; compilação CI sozinha **não** garante essa capacidade.
+
+
+## ISM v0.11.4 — logo oficial + 300s + envio nativo IXC
+
+APK baseado na branch de interface v0.11.3 com a **primeira logomarca do PDF** (`ism_logo_primeira.webp`), navegação Início/Voltar, sessão de 300 segundos, botão Imprimir código de barras ITF, novos botões PIX e envio de boleto por e-mail.
+
+**Envio:** no card da fatura, toque em **Enviar boleto**, confira o destinatário parcialmente mascarado e confirme. O Android chama `POST /api/v1/faturas/{id}/enviar-email` com `session` temporária e `confirmar_envio: true`. O backend valida título aberto, titularidade e e-mail único cadastrado, antes de usar **GET** `/webservice/v1/get_boleto`, com `ixcsoft: listar` e JSON `{"boletos":"<id>","juro":"N","multa":"N","atualiza_boleto":"N","tipo_boleto":"mail"}`. A instalação ISM retornou `{"registros":[{"sucesso":true}]}` em teste CLI de 13/11/2026. A aceitação não comprova entrega — verificar log/fila IXC e caixa postal.
+
+- **Não é necessário configurar `BOLETO_SMTP_*` ou `BOLETO_EMAIL_ENABLED`** para a operação nativa do IXC. O módulo SMTP antigo permanece no código, mas o botão de boleto não o utiliza.
+- O backend usa `BOLETO_EMAIL_DB` (padrão `/data/boleto_email.db`) para impedir solicitações duplicadas por 300 segundos, mesmo após timeout. O volume Docker precisa ter permissão de escrita.
+- Atualize primeiro o backend para **0.11.4**, depois instale o APK **0.11.4**. Confirme `GET /version` com `{"versao":"0.11.4","sessao_segundos":300}`.
+- O GitHub Actions gera APK **debug** para teste, não assinado pela chave de produção da Gertec/MDM. Se o APK atual tiver outra assinatura, a instalação como atualização poderá falhar; para ambiente gerenciado, solicite assinatura pela mesma chave da versão instalada. Não coloque credenciais IXC no APK.
