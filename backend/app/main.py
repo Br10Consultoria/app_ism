@@ -42,6 +42,10 @@ class SessionRequest(BaseModel):
     session: str = Field(min_length=15, max_length=1500)
 
 
+class EnviarBoletoEmailRequest(SessionRequest):
+    confirmar_envio: bool
+
+
 class WhatsAppRequest(SessionRequest):
     consentimento: bool
 
@@ -133,7 +137,7 @@ async def validar_terminal():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.11.0", "sessao_segundos": 60}
+    return {"app": "ISM Telecom", "versao": "0.11.3", "sessao_segundos": 60}
 
 
 @app.post("/api/v1/sessao/renovar",
@@ -303,6 +307,35 @@ async def whatsapp_pix(invoice_id: int, body: WhatsAppRequest):
         raise HTTPException(502, "Falha ao consultar PIX ou cliente no IXC")
     except WhatsAppError as error:
         raise HTTPException(error.status_code, str(error))
+
+
+@app.post("/api/v1/faturas/{invoice_id}/enviar-email",
+          dependencies=[Depends(require_terminal), Depends(throttle)])
+async def enviar_boleto_email(invoice_id: int, body: EnviarBoletoEmailRequest):
+    """Solicita envio pelo SMTP do IXC, sem expor e-mail nem credenciais ao terminal."""
+    if invoice_id < 1:
+        raise HTTPException(404, "Cobrança inválida")
+    if not body.confirmar_envio:
+        raise HTTPException(422, "Confirme o envio ao e-mail cadastrado no IXC")
+    client_id = read_session(body.session)
+    try:
+        ixc = IXC()
+        invoice = await ixc.invoice(invoice_id)
+        if not invoice or str(invoice.get("id_cliente")) != client_id:
+            raise HTTPException(404, "Cobrança não encontrada")
+        if invoice.get("status") != "A" or invoice.get("liberado") != "S":
+            raise HTTPException(409, "Cobrança não está aberta ou liberada")
+        result = await ixc.send_boleto_email(invoice_id)
+        return {
+            "id": str(invoice_id),
+            **result,
+            "mensagem": (
+                "IXC aceitou a solicitação de envio. "
+                "A entrega deve ser conferida na fila ou no log de e-mails do IXC."
+            ),
+        }
+    except IXCError:
+        raise HTTPException(502, "IXC não confirmou o envio do boleto por e-mail")
 
 
 @app.post("/api/v1/faturas/{invoice_id}/{kind}", dependencies=[Depends(require_terminal), Depends(throttle)])
