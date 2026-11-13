@@ -1324,12 +1324,23 @@ public class MainActivity extends Activity {
 
     private void printPdf() {
         if (tempPdf == null || !tempPdf.exists()) {
-            dialog("Boleto indisponível. Abra novamente."); return;
+            dialog("Documento para impressão indisponível. Abra novamente."); return;
+        }
+        if (!getPackageManager().hasSystemFeature("android.software.print")) {
+            dialog("O sistema da maquininha não disponibiliza impressão pelo Android. " +
+                    "A impressora térmica Gertec precisa do SDK/serviço do fabricante.");
+            return;
         }
         final File file = tempPdf;
+        final boolean onlyBarcode = file.getName().contains("codigo_barras");
         try {
             PrintManager printer = (PrintManager) getSystemService(Context.PRINT_SERVICE);
-            printer.print("Boleto ISM Telecom", new PrintDocumentAdapter() {
+            if (printer == null) {
+                dialog("Serviço de impressão Android indisponível neste terminal.");
+                return;
+            }
+            printer.print(onlyBarcode ? "Código de barras ISM" : "Boleto ISM Telecom",
+                    new PrintDocumentAdapter() {
                 @Override public void onLayout(PrintAttributes oldAttributes, PrintAttributes newAttributes,
                         CancellationSignal cancellation, LayoutResultCallback callback, Bundle extras) {
                     if (cancellation.isCanceled()) { callback.onLayoutCancelled(); return; }
@@ -1358,7 +1369,8 @@ public class MainActivity extends Activity {
                 }
             }, null);
         } catch (Exception ex) {
-            dialog("Impressão exige serviço Android compatível. A impressora interna Gertec depende do SDK oficial.");
+            dialog("A impressora interna Gertec não foi acessada pelo serviço Android. " +
+                    "Será necessário integrar o SDK de impressão fornecido pela Gertec/Getnet.");
         }
     }
 
