@@ -184,6 +184,9 @@ def main():
     args = parser.parse_args()
 
     try:
+        if not args.revoke_shared and not args.status:
+            if not Path(args.png).is_absolute():
+                raise ActivationError("Informe caminho absoluto para --png")
         if args.revoke_shared:
             print("QR compartilhado revogado." if revoke_shared()
                   else "Nenhum QR compartilhado estava ativo.")
@@ -224,10 +227,10 @@ def main():
         os.chmod(str(destination), 0o600)
         print("PNG no container:", destination)
         if not args.no_ascii:
-            print("\\nQR para escanear com a maquineta:\\n")
+            print("\nQR para escanear com a maquineta:\n")
             qr.print_ascii(out=sys.stdout, invert=True)
     except (ActivationError, OSError, sqlite3.Error) as error:
-        parser.exit(2, f"Erro na ativação: {error}\\n")
+        parser.exit(2, f"Erro na ativação: {error}\n")
 
 
 if __name__ == "__main__":
