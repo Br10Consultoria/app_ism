@@ -322,7 +322,7 @@ public class MainActivity extends Activity {
 
     /**
      * Ativação pela câmera, sem mostrar a chave permanente em um QR.
-     * O servidor emite um convite de uso único por cinco minutos.
+     * O servidor pode emitir um QR compartilhado que serve para todas as maquinetas.
      */
     private void showTerminalSetup() {
         if (terminalConfigured()) {
@@ -342,8 +342,8 @@ public class MainActivity extends Activity {
         scan.setOnClickListener(v -> scanActivationQRCode());
         content.addView(scan, margins(-1, dp(72), 14));
         content.addView(label(
-                "O QR Code só funciona uma vez e expira em poucos minutos. "
-                + "Peça uma nova imagem se ele já tiver sido utilizado.",
+                "O mesmo QR Code pode ativar todas as maquinetas ISM. "
+                + "Se o administrador o revogar, solicite a imagem atualizada.",
                 13, MUTED, false), margins(-1, -2, 18));
 
         Button manual = button("Ativar digitando a chave (alternativa)", NAVY, false);
@@ -460,9 +460,9 @@ public class MainActivity extends Activity {
                         }
                     }
                 } else if (status == 401 || status == 422) {
-                    error = "QR Code expirado, inválido ou já utilizado. Solicite um novo.";
+                    error = "QR Code inválido, revogado ou expirado. Solicite ao administrador.";
                 } else if (status == 404) {
-                    error = "Atualize o backend ISM para v0.11.5 antes de ativar por QR.";
+                    error = "Atualize o backend ISM para v0.11.6 antes de ativar por QR.";
                 } else {
                     error = "Servidor não autorizou a ativação (HTTP " + status + ").";
                 }
