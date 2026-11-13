@@ -789,28 +789,58 @@ public class MainActivity extends Activity {
                 "e não está habilitado nesta versão.", 12, MUTED, false));
     }
 
-    /** Busca o destinatário SOMENTE no IXC e pede o envio ao backend SMTP. */
+    /** IXC envia pelo próprio e-mail cadastrado; não precisa de SMTP nem WhatsApp no POS. */
     private void emailBoleto(String id) {
         if (!isSessionValid()) {
-            showHome(); dialog("Sessão expirada. Faça nova consulta."); return;
+            showHome();
+            dialog("Sessão expirada. Faça nova consulta.");
+            return;
         }
         JSONObject emailInfo = invoiceResponse == null ? null
                 : invoiceResponse.optJSONObject("boleto_email");
-        if (emailInfo != null && !emailInfo.optBoolean("cadastrado", false)) {
-            dialog("Cliente sem e-mail cadastrado no IXC. Atualize o cadastro para enviar o boleto.");
+        if (emailInfo == null) {
+            dialog("Atualize primeiro o servidor ISM para usar o envio de boleto pelo IXC.");
             return;
         }
-        if (emailInfo != null && !emailInfo.optBoolean("disponivel", false)) {
-            dialog("O envio automático de boleto ainda não está configurado no servidor ISM.");
+        if (!emailInfo.optBoolean("cadastrado", false)) {
+            dialog("Cliente sem e-mail cadastrado no IXC. Atualize o cadastro antes de enviar.");
             return;
         }
-        JSONObject request = new JSONObject();
-        try { request.put("session", session); } catch (JSONException ignored) {}
-        call("/api/v1/faturas/" + id + "/enviar-email", request, result -> {
-            String masked = result.optString("destinatario_mascarado", "");
-            dialog("Boleto da fatura " + id + " aceito pelo servidor SMTP para " +
-                    masked + ". A entrega deve ser confirmada pelo destinatário.");
-        });
+        if (!emailInfo.optBoolean("disponivel", false)) {
+            dialog("Envio de boleto indisponível neste momento no IXC.");
+            return;
+        }
+        final String masked = emailInfo.optString("destinatario_mascarado", "");
+        new AlertDialog.Builder(this)
+                .setTitle("Enviar boleto por e-mail")
+                .setMessage("Enviar a fatura " + id + " para o e-mail cadastrado no IXC"
+                        + (masked.isEmpty() ? "?" : " (" + masked + ")?")
+                        + "\nO e-mail pode ser enviado imediatamente.")
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Confirmar envio", (d, which) -> {
+                    if (!isSessionValid()) {
+                        showHome();
+                        dialog("Sessão expirada. Faça nova consulta.");
+                        return;
+                    }
+                    JSONObject request = new JSONObject();
+                    try {
+                        request.put("session", session);
+                        request.put("confirmar_envio", true);
+                    } catch (JSONException ex) {
+                        dialog("Erro ao preparar envio.");
+                        return;
+                    }
+                    call("/api/v1/faturas/" + id + "/enviar-email", request, result -> {
+                        if (result.optBoolean("solicitacao_aceita", false)) {
+                            dialog("O IXC aceitou o pedido de envio da fatura " + id
+                                    + ". Confira a caixa de e-mail e o log do IXC. "
+                                    + "A entrega ainda não foi confirmada.");
+                        } else {
+                            dialog("O IXC não confirmou o pedido de envio.");
+                        }
+                    });
+                }).show();
     }
 
     /** Imprime somente as barras e a representação numérica (não o boleto inteiro). */
