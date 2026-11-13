@@ -36,3 +36,7 @@ A impressora térmica interna da GPOS780 exige SDK e credenciamento Gertec, não
 
 ### Novidade da v0.11.4
 Baseada na UI completa da v0.11.3 (primeira logo do PDF, botões atuais, PIX e sessão 300s). O botão **Enviar boleto** utiliza a API de e-mail do próprio IXC, sem configurar um novo servidor SMTP na aplicação ISM. O IXC aceita a solicitação, mas a entrega deve ser confirmada pelo log de e-mails do IXC.
+
+
+### Ativação com QR Code (v0.11.5)
+Para cada nova maquineta, o administrador gera um QR de cinco minutos e **uso único** no próprio backend: `docker exec -it backend-api-1 python -m app.terminal_activation --minutes 5`. O app usa câmera integrada, valida convite no backend HTTPS e salva a chave cifrada (sem expor a TERMINAL_KEY no QR). Sem câmera/MDM, existe a opção manual. Atualize o backend antes do APK.
