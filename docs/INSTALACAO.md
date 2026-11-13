@@ -292,3 +292,102 @@ Esta opção não usa WhatsApp instalado na maquininha e não requer credenciais
 A API do Opa documenta `openCustomerService: true` no envio de template: https://api.opasuite.com.br/. Configure o modelo para a finalidade correta, consulte status e permissões antes do primeiro teste real. Não use `data_cake` (boas-vindas a assinantes) para interessados.
 
 Atualização: `git switch main && git pull --ff-only origin main`; `cd backend && docker compose up -d --build`; conferir `GET /version = 0.11.0`; instalar APK v0.11.
+
+## ISM v0.11.2 — sessão de 5 minutos, logomarca oficial e impressora Gertec (2026-11-13)
+
+- Backend **e** APK Android precisam ser atualizados de forma coordenada. O token de consulta agora é válido por **300 segundos** (`create_session` e `/api/v1/sessao/renovar`), e a contagem do aplicativo também usa **300000ms**. Atualizar só o APK deixa o backend anterior expirar em 60s.
+- `GET /version` deve retornar `{"app":"ISM Telecom","versao":"0.11.2","sessao_segundos":300}`.
+- O logo foi extraído da **segunda página** do PDF oficial `ISM Telecom_logo.pdf`: aplicado proporcionalmente como bitmap, sem distorção das letras e sem redesenho. O arquivo de fonte PDF não precisa ir para a maquininha; a arte PNG fica embutida no APK.
+- `Imprimir código`: API **já existente do IXC** `/webservice/v1/fn_areceber` e `get_boleto` (linha digitável quando necessária), via rota ISM `/api/v1/faturas/{id}/barra`, e geração de barras ITF (2 de 5 intercalado) no Android. NÃO depende de uma API do IXC para imprimir; IXC entrega dados, Gertec faz a impressão.
+- **Não existe ainda integração comprovada com a impressora térmica interna GPOS780.** A v0.11.2 verifica suporte de impressão Android e usa `PrintManager`, que abre a interface do sistema para selecionar impressora. Nem toda SmartPOS expõe a térmica por esse serviço. Se não aparecer/imprimir, solicitar **SDK ou serviço de impressão para GPOS780** ao fornecedor responsável, com documentação/versão compatível e, quando aplicável, bibliotecas do fabricante; não inventar nomes de pacotes AIDL/Intent.
+- O envio automático do boleto por e-mail do IXC continua dependendo do **SMTP institucional** configurado no backend (`BOLETO_EMAIL_ENABLED=true` e dados SMTP válidos); a API de emissão de boleto não é uma API de envio de e-mail.
+- Assinatura: CI produz APK **debug**. A empresa que gerencia GPOS780 deverá assinar/distribuir a atualização com a **mesma identidade de assinatura Android** usada na instalação anterior. Não desinstalar a versão existente para contornar `INSTALL_FAILED_UPDATE_INCOMPATIBLE` sem preservar a ativação.
+- Testes previstos na maquininha: login, consultar CPF, observar contador 300s, voltar/home, logo sem inclinação, barras impressas e escaneáveis, QR PIX, e-mail cadastrado. Validar impressão física na bobina; compilação CI sozinha **não** garante essa capacidade.
+
+
+## ISM v0.11.4 — logo oficial + 300s + envio nativo IXC
+
+APK baseado na branch de interface v0.11.3 com a **primeira logomarca do PDF** (`ism_logo_primeira.webp`), navegação Início/Voltar, sessão de 300 segundos, botão Imprimir código de barras ITF, novos botões PIX e envio de boleto por e-mail.
+
+**Envio:** no card da fatura, toque em **Enviar boleto**, confira o destinatário parcialmente mascarado e confirme. O Android chama `POST /api/v1/faturas/{id}/enviar-email` com `session` temporária e `confirmar_envio: true`. O backend valida título aberto, titularidade e e-mail único cadastrado, antes de usar **GET** `/webservice/v1/get_boleto`, com `ixcsoft: listar` e JSON `{"boletos":"<id>","juro":"N","multa":"N","atualiza_boleto":"N","tipo_boleto":"mail"}`. A instalação ISM retornou `{"registros":[{"sucesso":true}]}` em teste CLI de 13/11/2026. A aceitação não comprova entrega — verificar log/fila IXC e caixa postal.
+
+- **Não é necessário configurar `BOLETO_SMTP_*` ou `BOLETO_EMAIL_ENABLED`** para a operação nativa do IXC. O módulo SMTP antigo permanece no código, mas o botão de boleto não o utiliza.
+- O backend usa `BOLETO_EMAIL_DB` (padrão `/data/boleto_email.db`) para impedir solicitações duplicadas por 300 segundos, mesmo após timeout. O volume Docker precisa ter permissão de escrita.
+- Atualize primeiro o backend para **0.11.4**, depois instale o APK **0.11.4**. Confirme `GET /version` com `{"versao":"0.11.4","sessao_segundos":300}`.
+- O GitHub Actions gera APK **debug** para teste, não assinado pela chave de produção da Gertec/MDM. Se o APK atual tiver outra assinatura, a instalação como atualização poderá falhar; para ambiente gerenciado, solicite assinatura pela mesma chave da versão instalada. Não coloque credenciais IXC no APK.
+
+
+## v0.11.5 — ativação por QR Code legado de uso único (substituído pela v0.11.6)
+
+**Motivo:** facilitar a ativação da maquineta Gertec pela câmera, sem colocar a `TERMINAL_KEY` permanente no QR. O convite tem 256 bits aleatórios, validade padrão de 5 minutos e **uso único**; o backend guarda apenas o SHA-256 do código em SQLite persistente.
+
+### Procedimento do administrador (Ubuntu, dentro do servidor ISM)
+1. Atualize primeiro o backend para v0.11.5 e confirme `curl -fsS https://app.ismtelecom.com.br/version` (deve mostrar `"versao":"0.11.5"`). Execute a partir do diretório `/home/suporte/app_ism/backend`, **após** integrar a branch validada:
+```bash
+cd /home/suporte/app_ism/backend
+docker compose up -d --build
+docker ps --format 'table {{.Names}}\t{{.Status}}'
+```
+2. Quando o cliente estiver pronto para escanear, gere **um QR para cada maquineta**:
+```bash
+docker exec -it backend-api-1 python -m app.terminal_activation --minutes 5
+```
+O terminal exibe o desenho do QR e grava um PNG temporário em `/tmp/ism-ativacao.png` dentro do container. Você pode tirar foto da tela do terminal para enviar ao cliente ou extrair o PNG:
+```bash
+docker cp backend-api-1:/tmp/ism-ativacao.png /home/suporte/ism-ativacao.png
+```
+Envie a imagem pelo canal interno confiável e **apague a cópia logo após a ativação**; não a deixe em páginas públicas nem repositórios. Se o QR expirar ou já tiver sido usado, gere outro. O código não contém a chave permanente.
+3. Na maquineta, instale o APK v0.11.5, abra o app e toque em **Escanear QR Code de ativação**. A câmera é integrada ao aplicativo (pode requerer liberação de câmera no MDM). Aponte para a imagem exibida no outro celular/computador. A ativação salva a credencial de forma cifrada no Android Keystore. **Não precisa digitar a chave**.
+4. Se a câmera não puder ser utilizada, selecione **Ativar digitando a chave (alternativa)**; a ativação manual anterior continua disponível.
+
+### Funcionamento e segurança
+- O app **não usa URL do QR**: aceita somente `ISM-ACT1:` seguido de 43 caracteres de convite aleatório. Comunica-se exclusivamente com o `API_BASE` HTTPS definido no APK.
+- A API `POST /api/v1/terminal/ativar-qr` aceita `{"codigo":"<43 caracteres>"}`, exige convite válido, não expirado e ainda não consumido, e somente então retorna a chave do terminal **por HTTPS**. Usa `Cache-Control: no-store` e a proteção de requisições existente.
+- Um QR capturado pode ser utilizado por quem o receber **antes** do verdadeiro cliente; compartilhe diretamente com o responsável quando estiver pronto para escanear. Não envie a senha permanente.
+- O usuário não precisa informar `IXC_TOKEN`; a chave de terminal permanece no backend e depois no Android Keystore.
+- O volume Docker `ism_leads:/data` precisa ser gravável para o arquivo `terminal_activation.db`. O próprio gerador executa como usuário não privilegiado do container.
+- Este mecanismo preserva toda a interface da v0.11.4: logo do PDF, 300s, boletos, PIX e envio por e-mail IXC.
+- APK do GitHub Actions é **debug**: para sobrescrever APK da maquineta assinado pela Gertec/MDM, obtenha assinatura compatível. Caso contrário, instale em ambiente de teste ou desinstale a versão anterior, ciente de que isso pode apagar a ativação.
+
+
+## ISM v0.11.6 — UM QR COMPARTILHADO PARA TODAS AS MAQUINETAS
+
+**Nova regra:** você cria **uma única imagem** de ativação. O mesmo QR Code pode ser escaneado **em quantas maquinetas ISM forem necessárias**, sem gerar outro a cada ativação e **sem expirar automaticamente**. A imagem permanece válida até ser revogada ou substituída por você. O QR contém um código aleatório, nunca a chave permanente `TERMINAL_KEY`.
+
+No Ubuntu, com o backend **v0.11.6 instalado** e `/version` confirmando 0.11.6:
+
+```bash
+# 1) Gerar UMA VEZ; repetir este comando TROCA e invalida o QR anterior!
+docker exec -it backend-api-1 python -m app.terminal_activation --shared
+
+# 2) Copiar a imagem para o Ubuntu e guardar protegida
+docker cp backend-api-1:/data/ism-ativacao-compartilhada.png /home/suporte/ism-ativacao-compartilhada.png
+chmod 600 /home/suporte/ism-ativacao-compartilhada.png
+```
+
+Envie **o mesmo PNG** a cada técnico/cliente autorizado e escaneie em quantas maquinetas desejar. Guarde o arquivo PNG em local seguro e com acesso restrito para reutilizá-lo; não é necessário executar o comando novamente enquanto o QR anterior continuar ativo.
+
+**Consultar se o QR está ativo (sem invalidá-lo):**
+```bash
+docker exec backend-api-1 python -m app.terminal_activation --status
+```
+
+**Revogar imediatamente se a imagem for compartilhada indevidamente:**
+```bash
+docker exec backend-api-1 python -m app.terminal_activation --revoke-shared
+```
+
+**Substituir o QR antigo por outro compartilhado**: repita a geração com `--shared`; isso revoga o anterior automaticamente. A nova imagem substitui a anterior em todas as futuras instalações. As maquinetas já ativadas continuam configuradas (revogação do QR não revoga a `TERMINAL_KEY` que já está salva). Se houver suspeita de ativação não autorizada, também é necessário tratar a chave de terminal com a equipe de operação.
+
+**QR de uso único emergencial (opcional):**
+```bash
+docker exec -it backend-api-1 python -m app.terminal_activation --one-time --minutes 5 --png /tmp/ism-temporario.png
+```
+
+**Segurança:** o QR compartilhado é uma credencial de provisionamento. Quem possuir a imagem poderá tentar ativar uma maquineta enquanto o QR estiver ativo. Evite publicação em sites, grupos abertos ou repositórios. Mantenha HTTPS, limite de requisições e controles do terminal/MDM. Para revogar o QR, use o comando administrativo; o endpoint público não permite emissão ou revogação.
+
+**Interface:** Android v0.11.6 exibe "O mesmo QR Code pode ativar todas as maquinetas ISM" e mantém alternativa manual, primeira logo oficial, botões de boleto/Pix e a sessão de 300 segundos. Backend v0.11.6 deve ser instalado antes do app. O fluxo de leitura é compatível com a versão 0.11.5 (a v0.11.6 apenas atualiza mensagens na tela).
+
+
+### Correção v0.11.6: arquivo QR persistente
+O PNG compartilhado agora é salvo, **por padrão**, em `/data/ism-ativacao-compartilhada.png`, volume persistente do container. O caminho antigo `/tmp/ism-ativacao-compartilhada.png` podia desaparecer após reinício/recriação do contêiner. O QR gerado antes do ajuste deve ser substituído **uma única vez** com `--shared`, que revoga o anterior; em seguida, copie o arquivo de `/data`. Com backend antigo v0.11.6, o mesmo comportamento já pode ser obtido passando explicitamente `--png /data/ism-ativacao-compartilhada.png`. Consultar com `--status` não gira nem revoga QR.
