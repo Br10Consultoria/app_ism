@@ -41,6 +41,6 @@ jobs:
       - run: gradle -p android :app:assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: ism-telecom-v0.11.2-5min-logo-original-apk
+          name: ism-telecom-v0.11.3-logo-primeira-apk
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 14
