@@ -89,7 +89,7 @@ def secret():
 
 
 def create_session(customer_id):
-    payload = {"id": str(customer_id), "exp": int(time.time()) + 60}
+    payload = {"id": str(customer_id), "exp": int(time.time()) + 300}
     encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
     signature = hmac.new(secret(), encoded.encode(), hashlib.sha256).hexdigest()
     return encoded + "." + signature
@@ -134,15 +134,15 @@ async def validar_terminal():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.11.1", "sessao_segundos": 60}
+    return {"app": "ISM Telecom", "versao": "0.11.2", "sessao_segundos": 300}
 
 
 @app.post("/api/v1/sessao/renovar",
           dependencies=[Depends(require_terminal), Depends(throttle)])
 async def renovar_sessao(body: SessionRequest):
-    """Renova por mais 60s somente mediante acao do operador e token ainda valido."""
+    """Renova por mais 300s somente mediante acao do operador e token ainda valido."""
     client_id = read_session(body.session)
-    return {"session": create_session(client_id), "sessao_segundos": 60}
+    return {"session": create_session(client_id), "sessao_segundos": 300}
 
 
 @app.post("/api/v1/faturas", dependencies=[Depends(require_terminal), Depends(throttle)])
