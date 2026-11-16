@@ -411,6 +411,9 @@ Para finalizar:
 
 ### 2. E-mail do boleto IXC
 
+**Correção de método (16/11/2026):** A documentação oficial em `https://api-provedor.ixcsoft.com.br/` apresenta `POST /webservice/v1/get_boleto` para `tipo_boleto=mail`. O backend antigo usava GET e retornava `sucesso:true` sem que o destinatário recebesse e-mail em teste de campo. O código passou a usar **POST**, corpo JSON e Basic Auth, sem `ixcsoft:listar`. **O envio real por POST ainda exige homologação no IXC; aceite da API não equivale a entrega.** Confira `Configurações > Logs > Logs de e-mails`, campo ID Receber e status, e compare com envio manual pela interface. Não dispare testes repetidos sem verificar a fila.
+
+
 O endpoint IXC já homologado é `GET get_boleto` com `tipo_boleto=mail` e `ixcsoft:listar`. A v0.11.6 fazia pré-validação de e-mail nos campos `email`, `email_principal` e `email_cobranca` da listagem `cliente`; se ausentes, recusava mesmo com e-mail configurado em outro lugar no IXC.
 
 Na v0.11.7, após validar sessão de cinco minutos, titularidade, estado e liberação da fatura, o backend solicita ao IXC o envio nativo. O **IXC determina o destinatário**, a maquineta não pode escolher outro. Um e-mail mascarado informado na listagem é apenas informativo: não comprova o destino que o endpoint `get_boleto` usou. Confirme o processamento na fila/log IXC e na caixa postal.
