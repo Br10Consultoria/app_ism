@@ -426,3 +426,19 @@ A interface mantém a primeira marca ISM, mas agora remove o branco externo cone
 
 
 **Atualização após teste (16/11/2026):** o destinatário confirmou o recebimento posterior do PDF enviado pela API enquanto o backend ainda executava v0.11.6 com GET e `ixcsoft:listar`. Isso indica que GET também é aceito e o envio pode ter ocorrido com atraso. Por precaução, o código mantém GET homologado até testar outros métodos separadamente. Verifique a hora de solicitação no log IXC e a de recebimento no e-mail; sucesso da API não é comprovação imediata de entrega.
+
+
+## ISM v0.11.8 — inicialização GEDI e homologação do envio
+
+**E-mail (caso 443303):** o usuário confirmou o recebimento real do PDF enviado pelo IXC em 16/11/2026, com atraso em relação à resposta `sucesso: true` da API GET `get_boleto`. Mantemos GET, Basic Auth e `ixcsoft: listar`. O bloqueio anterior de e-mail ausente no cliente foi removido; o IXC escolhe o destinatário após validação da titularidade, sessão e estado da cobrança. Não confundir aceite com entrega imediata.
+
+**Impressão:** o arquivo `Gertec - Printing With GEDI.rar` contém o exemplo Android Gertec e um AAR chamado `gedi_payment-1.14.15.1.aar`. O exemplo exige:
+1. `GEDI.init(Context)` antes de `GEDI.getInstance(Context)`.
+2. `getPRNTR()`, `Init()`, `Status()`, `DrawPictureExt(...)`, `Output()`.
+O adaptador `GertecNativePrinter` foi corrigido para esse fluxo com reflexão via interfaces públicas `IGEDI` e `IPRNTR`, com tratamento de erros de falta de papel ou biblioteca. O recibo foi ajustado para 384x670 pixels, não abre o PDF.
+
+**Compatibilidade:** esse AAR 1.14.15.1 vem de um projeto exemplo antigo e não foi confirmado como SDK GPOS780. Referências públicas de SDK GPOS780 informam GEDI **1.16.21**, PPComp **001.32.240506** e libHCL **1.0.8** para determinada imagem/firmware. NÃO inserir o AAR antigo em produção só para evitar erro de biblioteca: pode falhar ou interferir no dispositivo. Baixe no portal Gertec **o pacote SDK GPOS780 compatível com a imagem/firmware efetivos da maquineta** e encaminhe os AARs para uma compilação final de impressão física.
+
+O APK CI v0.11.8 **não embute AAR GEDI/PPComp**, portanto mostra prévia e diagnóstico no botão Imprimir Código. Essa é uma limitação conhecida; compilar sem erros não significa que a impressora térmica tenha sido validada. O usuário pode testar já o e-mail, logo, botões e layout térmico, e enviar a mensagem mostrada pelo aparelho.
+
+A marca no app é um WebP com fundo externo convertido em transparente em tempo de execução; o PNG original transparente enviado em conversa não foi incorporado ao recurso binário do GitHub, pendente para compilação posterior.
