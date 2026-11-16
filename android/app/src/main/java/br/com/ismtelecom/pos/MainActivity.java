@@ -979,10 +979,12 @@ public class MainActivity extends Activity {
                 }).show();
     }
 
-    /** Imprime somente as barras e a representação numérica (não o boleto inteiro). */
+    /** Cupom estreito para a bobina térmica, sem abrir PDF ou Android PrintManager. */
     private void printBarcodeOnly(String id) {
         if (!isSessionValid()) {
-            showHome(); dialog("Sessão expirada. Consulte novamente."); return;
+            showHome();
+            dialog("Sessão expirada. Consulte novamente.");
+            return;
         }
         JSONObject request = new JSONObject();
         try { request.put("session", session); } catch (JSONException ignored) {}
@@ -991,49 +993,56 @@ public class MainActivity extends Activity {
             try {
                 number = BrazilianBoletoBarcode.convert(result.optString("codigo", ""));
             } catch (IllegalArgumentException ex) {
-                dialog("Código de barras indisponível nesta cobrança pelo IXC.");
+                dialog("O IXC não forneceu um código bancário válido para esta cobrança.");
                 return;
             }
+            String issued = result.optString("emissao", "");
+            String due = result.optString("vencimento", "");
+            String value = result.optString("valor", "");
+
+            Bitmap receipt;
             try {
-                closePdf();
-                File dir = new File(getCacheDir(), "boletos");
-                if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("Cache indisponível");
-                tempPdf = new File(dir, "codigo_barras_temporario.pdf");
-                // Boletos bancários e de arrecadação utilizam Interleaved 2 of 5 (ITF).
-                // CODE_128 não deve ser usado para representar a barra de boleto.
-                BitMatrix bits = new MultiFormatWriter().encode(
-                        number, BarcodeFormat.ITF, 680, 150);
-                Bitmap barcode = Bitmap.createBitmap(bits.getWidth(), bits.getHeight(),
-                        Bitmap.Config.ARGB_8888);
-                for (int x = 0; x < bits.getWidth(); x++) {
-                    for (int y = 0; y < bits.getHeight(); y++) {
-                        barcode.setPixel(x, y, bits.get(x, y) ? Color.BLACK : Color.WHITE);
-                    }
-                }
-                PdfDocument doc = new PdfDocument();
-                try {
-                    PdfDocument.PageInfo info = new PdfDocument.PageInfo.Builder(290, 200, 1).create();
-                    PdfDocument.Page page = doc.startPage(info);
-                    Canvas canvas = page.getCanvas();
-                    canvas.drawColor(Color.WHITE);
-                    Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-                    canvas.drawBitmap(barcode, null, new android.graphics.RectF(12, 25, 278, 113), paint);
-                    paint.setColor(Color.BLACK);
-                    paint.setTextSize(10);
-                    paint.setTypeface(Typeface.MONOSPACE);
-                    canvas.drawText(number.substring(0, 22), 18, 141, paint);
-                    canvas.drawText(number.substring(22), 18, 157, paint);
-                    doc.finishPage(page);
-                    try (FileOutputStream out = new FileOutputStream(tempPdf)) {
-                        doc.writeTo(out);
-                    }
-                } finally { doc.close(); barcode.recycle(); }
-                printPdf();
+                receipt = ThermalReceipt.render(
+                        id,
+                        issued.isEmpty() ? "" : dateBR(issued),
+                        dateBR(due),
+                        money(value),
+                        number
+                );
             } catch (Exception ex) {
-                dialog("Falha ao preparar código de barras para impressão. " +
-                        "A impressora interna Gertec pode exigir o SDK oficial.");
+                dialog("Não foi possível preparar o recibo térmico. Verifique os dados do IXC.");
+                return;
             }
+
+            executor.execute(() -> {
+                GertecNativePrinter.Result printed = GertecNativePrinter.print(receipt);
+                ui.post(() -> {
+                    if (printed.submitted) {
+                        dialog(printed.detail);
+                    } else {
+                        showThermalPreview(receipt, printed.detail);
+                    }
+                });
+            });
         });
+    }
+
+    /** Em caso de SDK ausente mostra o layout real e o diagnóstico; não finge imprimir. */
+    private void showThermalPreview(Bitmap receipt, String reason) {
+        LinearLayout layout = col();
+        layout.setPadding(dp(14), dp(9), dp(14), dp(9));
+        TextView warning = label(reason, 13, RED, true);
+        layout.addView(warning, margins(-1, -2, 12));
+        ImageView image = new ImageView(this);
+        image.setImageBitmap(receipt);
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setAdjustViewBounds(true);
+        layout.addView(image, margins(-1, dp(360), 4));
+        new AlertDialog.Builder(this)
+                .setTitle("Prévia de recibo térmico")
+                .setView(layout)
+                .setPositiveButton("Fechar", null)
+                .show();
     }
 
     private void requestPayment(String id, String kind) {
