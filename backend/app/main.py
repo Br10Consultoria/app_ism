@@ -398,7 +398,8 @@ async def pagamento(invoice_id: int, kind: str, body: SessionRequest):
             raise HTTPException(409, "Cobrança não está aberta")
         info = await ixc.payment(invoice, kind)
         return {"tipo": kind, "id": invoice_id, "valor": make_invoice(invoice)["valor"],
-                "vencimento": make_invoice(invoice)["vencimento"], **info}
+                "vencimento": make_invoice(invoice)["vencimento"],
+                "emissao": make_invoice(invoice)["emissao"], **info}
     except IXCError as err:
         # Erros sem PII nem token.
         raise HTTPException(422, str(err))
