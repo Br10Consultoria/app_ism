@@ -649,6 +649,34 @@ public class MainActivity extends Activity {
         TextView provisioned = label("Terminal autorizado para consultas ISM", 11, MUTED, false);
         provisioned.setGravity(Gravity.CENTER);
         content.addView(provisioned, margins(-1, -2, 8));
+
+        LinearLayout deviceInfo = col();
+        deviceInfo.setPadding(dp(12), dp(10), dp(12), dp(10));
+        deviceInfo.setBackground(shape(Color.WHITE, 10, Color.rgb(218, 231, 239)));
+        TextView serialText = label("Nº de série Gertec: consultando...", 13, NAVY, true);
+        deviceInfo.addView(serialText, margins(-1, -2, 5));
+        TextView auxiliary = label("", 11, MUTED, false);
+        deviceInfo.addView(auxiliary, margins(-1, -2, 2));
+        content.addView(deviceInfo, margins(-1, -2, 12));
+
+        final int homeEpoch = requestEpoch;
+        executor.execute(() -> {
+            GertecDeviceIdentity.Identity device = GertecDeviceIdentity.read(
+                    getApplicationContext());
+            ui.post(() -> {
+                if (homeEpoch != requestEpoch || !"home".equals(screenType)) return;
+                if (!device.serial.isEmpty()) {
+                    serialText.setText("Nº de série Gertec: " + device.serial);
+                    auxiliary.setText("Identificação física da maquineta (GEDI)");
+                } else {
+                    serialText.setText("Nº de série Gertec: indisponível");
+                    auxiliary.setText(device.androidId.isEmpty()
+                            ? "Diagnóstico: " + device.diagnostic
+                            : "ID Android (não é serial): " + device.androidId
+                                    + "\\n" + device.diagnostic);
+                }
+            });
+        });
     }
 
     private void showLookup() {
