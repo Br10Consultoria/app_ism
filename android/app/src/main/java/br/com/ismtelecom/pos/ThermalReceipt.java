@@ -20,7 +20,7 @@ import java.util.Collections;
  */
 final class ThermalReceipt {
     private static final int WIDTH = 384;
-    private static final int HEIGHT = 610;
+    private static final int HEIGHT = 670;
 
     private ThermalReceipt() {}
 
