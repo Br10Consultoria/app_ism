@@ -940,20 +940,18 @@ public class MainActivity extends Activity {
             dialog("Atualize primeiro o servidor ISM para usar o envio de boleto pelo IXC.");
             return;
         }
-        if (!emailInfo.optBoolean("cadastrado", false)) {
-            dialog("Cliente sem e-mail cadastrado no IXC. Atualize o cadastro antes de enviar.");
-            return;
-        }
         if (!emailInfo.optBoolean("disponivel", false)) {
-            dialog("Envio de boleto indisponível neste momento no IXC.");
+            dialog("O servidor ISM ainda não disponibiliza o envio pelo IXC. Atualize o backend.");
             return;
         }
         final String masked = emailInfo.optString("destinatario_mascarado", "");
         new AlertDialog.Builder(this)
                 .setTitle("Enviar boleto por e-mail")
                 .setMessage("Enviar a fatura " + id + " para o e-mail cadastrado no IXC"
-                        + (masked.isEmpty() ? "?" : " (" + masked + ")?")
-                        + "\nO e-mail pode ser enviado imediatamente.")
+                        + (masked.isEmpty()
+                            ? ". O destinatário não foi informado pela API de cadastro."
+                            : " (cadastro indica " + masked + ").")
+                        + "\\nO IXC escolherá o destinatário. Confirme no cadastro antes de enviar.")
                 .setNegativeButton("Cancelar", null)
                 .setPositiveButton("Confirmar envio", (d, which) -> {
                     if (!isSessionValid()) {
@@ -971,9 +969,9 @@ public class MainActivity extends Activity {
                     }
                     call("/api/v1/faturas/" + id + "/enviar-email", request, result -> {
                         if (result.optBoolean("solicitacao_aceita", false)) {
-                            dialog("O IXC aceitou o pedido de envio da fatura " + id
-                                    + ". Confira a caixa de e-mail e o log do IXC. "
-                                    + "A entrega ainda não foi confirmada.");
+                            dialog("O IXC aceitou a solicitação de e-mail da fatura " + id
+                                    + ". Verifique a fila/log de e-mails do IXC e o recebimento. "
+                                    + "A API não comprova a entrega.");
                         } else {
                             dialog("O IXC não confirmou o pedido de envio.");
                         }
