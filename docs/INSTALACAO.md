@@ -391,3 +391,32 @@ docker exec -it backend-api-1 python -m app.terminal_activation --one-time --min
 
 ### Correção v0.11.6: arquivo QR persistente
 O PNG compartilhado agora é salvo, **por padrão**, em `/data/ism-ativacao-compartilhada.png`, volume persistente do container. O caminho antigo `/tmp/ism-ativacao-compartilhada.png` podia desaparecer após reinício/recriação do contêiner. O QR gerado antes do ajuste deve ser substituído **uma única vez** com `--shared`, que revoga o anterior; em seguida, copie o arquivo de `/data`. Com backend antigo v0.11.6, o mesmo comportamento já pode ser obtido passando explicitamente `--png /data/ism-ativacao-compartilhada.png`. Consultar com `--status` não gira nem revoga QR.
+
+
+## ISM v0.11.7 — recibo térmico GPOS780 e envio de e-mail IXC
+
+### 1. Impressão da GPOS780
+
+O PDF enviado pelo cliente `GPOS780_1.pdf` comprova impressora térmica integrada, mas é uma ficha técnica, **não** uma referência dos métodos de impressão. No código anterior, os botões chamavam `PrintManager.print(...)` com um PDF; isso invocava o sistema Android, não a impressora interna Gertec.
+
+A v0.11.7 desenha um **recibo térmico de 384 pixels de largura**, com título IXC, data de emissão quando retornada, vencimento, valor cobrado e código ITF de 44 dígitos com duas linhas legíveis. Não inventa juros, multa ou desconto que a API não tenha informado. Os botões de impressão não chamam mais o PrintManager e nunca exibem um PDF como confirmação falsa de impressão.
+
+O novo adaptador `GertecNativePrinter` usa o contrato GEDI `GEDI.getInstance().getPRNTR()`, `Status()`, `Init()`, `DrawPictureExt(...)`, `Output()`, do SDK Gertec. **Ainda é necessário fornecer as bibliotecas GEDI/PPComp compatíveis com a GPOS780 e testá-las no aparelho.** Quando o SDK não está embutido, o app exibe mensagem clara e uma prévia do recibo. Compilar o APK sem SDK não comprova impressão física.
+
+Para finalizar:
+- Baixe do portal Gertec o **Pacote de Desenvolvimento da versão de firmware instalada** na GPOS780, incluindo `libgedi-*.aar`, `libppcomp-*.aar` e outros AARs exigidos pelo kit. **Não** misture versões de firmware/adquirentes.
+- Encaminhe os arquivos SDK (AAR/JAR) e o exemplo `Exemplos de Impressão` (código Java/Kotlin e manual de inicialização).
+- Depois da homologação do pacote, adicione os AAR/JAR autorizados em `android/app/libs/`. O Gradle já prevê `fileTree(dir:'libs',include:['*.aar','*.jar'])`. Se a biblioteca exigir ABI, configurar `armeabi-v7a` conforme manual da versão entregue.
+- Teste papel/tampa, saída, leitura bancária ITF real, corte/avanço e eventuais permissões do serviço Gertec. O resultado de `Output()` indica comando emitido, mas deve ser conferido na bobina.
+
+### 2. E-mail do boleto IXC
+
+O endpoint IXC já homologado é `GET get_boleto` com `tipo_boleto=mail` e `ixcsoft:listar`. A v0.11.6 fazia pré-validação de e-mail nos campos `email`, `email_principal` e `email_cobranca` da listagem `cliente`; se ausentes, recusava mesmo com e-mail configurado em outro lugar no IXC.
+
+Na v0.11.7, após validar sessão de cinco minutos, titularidade, estado e liberação da fatura, o backend solicita ao IXC o envio nativo. O **IXC determina o destinatário**, a maquineta não pode escolher outro. Um e-mail mascarado informado na listagem é apenas informativo: não comprova o destino que o endpoint `get_boleto` usou. Confirme o processamento na fila/log IXC e na caixa postal.
+
+A trava de reenvio persiste por cinco minutos por fatura. Em caso de falha/timeout, confira o log do IXC antes de repetir.
+
+### 3. Logomarca
+
+A interface mantém a primeira marca ISM, mas agora remove o branco externo conectado às bordas, preservando o branco interno do desenho, para aproveitar a transparência na tela. É uma melhoria sobre o recurso WebP já no APK. Para substituir pelo **PNG transparente de alta resolução exato** recebido do cliente, é necessário adicionar esse arquivo às resources em `android/app/src/main/res/drawable` e ajustar `IsmOfficialLogo` para o novo recurso.
