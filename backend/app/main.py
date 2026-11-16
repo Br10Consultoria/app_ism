@@ -125,6 +125,7 @@ def read_session(token):
 def make_invoice(row):
     return {"id": str(row["id"]),
             "vencimento": str(row.get("data_vencimento") or ""),
+            "emissao": str(row.get("data_emissao") or ""),
             "valor": str(row.get("valor_aberto") or row.get("valor") or "0"),
             "documento": str(row.get("documento") or "")}
 
