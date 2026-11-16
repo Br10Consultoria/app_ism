@@ -1015,7 +1015,7 @@ public class MainActivity extends Activity {
             }
 
             executor.execute(() -> {
-                GertecNativePrinter.Result printed = GertecNativePrinter.print(receipt);
+                GertecNativePrinter.Result printed = GertecNativePrinter.print(getApplicationContext(), receipt);
                 ui.post(() -> {
                     if (printed.submitted) {
                         dialog(printed.detail);
