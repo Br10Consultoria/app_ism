@@ -21,6 +21,7 @@ dependencies {
     // GEDI 2.2.6 / PPComp 1.39 / HCL 1.0.10, firmware 988B (SDK privado).
     // O CI valida hashes e extrai os AARs antes do build; ausencias falham o build.
     implementation fileTree(dir: 'libs', include: ['*.aar', '*.jar'])
+    implementation 'org.slf4j:slf4j-api:1.7.36' // interface de logs exigida por GEDI/PPComp/HCL
     implementation 'com.google.zxing:core:3.5.3'
     implementation 'androidx.core:core:1.13.1'
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
