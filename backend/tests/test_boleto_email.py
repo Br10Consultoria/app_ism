@@ -58,9 +58,9 @@ def test_native_ixc_email_payload_and_response(monkeypatch):
             return False
 
         async def request(self, method, url, json, headers):
-            assert method == "GET"
+            assert method == "POST"
             assert url == "https://ixc.example.test/webservice/v1/get_boleto"
-            assert headers["ixcsoft"] == "listar"
+            assert "ixcsoft" not in headers
             assert headers["Authorization"].startswith("Basic ")
             assert json == {
                 "boletos": "443303",
