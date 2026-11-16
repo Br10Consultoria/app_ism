@@ -36,11 +36,13 @@ jobs:
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
           test -n "$SDKMANAGER"
           "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
+      - name: Carregar SDK Gertec GPOS780 988B e logo ISM (checksums validados)
+        run: python3 scripts/install_gertec_sdk.py
       - name: Ativar AndroidX no CI (sem gravar segredos)
         run: echo "android.useAndroidX=true" >> android/gradle.properties
       - run: gradle -p android :app:assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: ism-telecom-v0.11.9-gpos780-serie-printer-apk
+          name: ism-telecom-v0.12.0-gpos780-sdk988b-native-apk
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 14
