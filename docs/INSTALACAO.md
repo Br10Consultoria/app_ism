@@ -423,3 +423,6 @@ A trava de reenvio persiste por cinco minutos por fatura. Em caso de falha/timeo
 ### 3. Logomarca
 
 A interface mantém a primeira marca ISM, mas agora remove o branco externo conectado às bordas, preservando o branco interno do desenho, para aproveitar a transparência na tela. É uma melhoria sobre o recurso WebP já no APK. Para substituir pelo **PNG transparente de alta resolução exato** recebido do cliente, é necessário adicionar esse arquivo às resources em `android/app/src/main/res/drawable` e ajustar `IsmOfficialLogo` para o novo recurso.
+
+
+**Atualização após teste (16/11/2026):** o destinatário confirmou o recebimento posterior do PDF enviado pela API enquanto o backend ainda executava v0.11.6 com GET e `ixcsoft:listar`. Isso indica que GET também é aceito e o envio pode ter ocorrido com atraso. Por precaução, o código mantém GET homologado até testar outros métodos separadamente. Verifique a hora de solicitação no log IXC e a de recebimento no e-mail; sucesso da API não é comprovação imediata de entrega.
