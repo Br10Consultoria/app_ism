@@ -1,12 +1,14 @@
 package br.com.ismtelecom.pos;
 
 import android.graphics.Bitmap;
+import android.content.Context;
 
 import java.lang.reflect.InvocationTargetException;
 
 /**
  * Adaptador para o SDK GEDI do GPOS780, usando o contrato público
- * GEDI.getInstance().getPRNTR(), Init, Status, DrawPictureExt, Output.
+ * GEDI.init(context), GEDI.getInstance(context).getPRNTR(),
+ * Init, Status, DrawPictureExt e Output (conforme exemplo Gertec GEDI).
  *
  * Sem o AAR GEDI compatível incluído no APK, retorna indisponível
  * e nunca tenta mascarar a falha abrindo o PrintManager/PDF.
@@ -25,23 +27,31 @@ final class GertecNativePrinter {
     private GertecNativePrinter() {}
 
     @SuppressWarnings({"unchecked", "rawtypes"})
-    static Result print(Bitmap receipt) {
+    static Result print(Context context, Bitmap receipt) {
         if (receipt == null) return new Result(false, "Recibo indisponível.");
         try {
             Class<?> gedi = Class.forName("br.com.gertec.gedi.GEDI");
-            Object instance = gedi.getMethod("getInstance").invoke(null);
+            Context application = context.getApplicationContext();
+            if (application == null) application = context;
+            // AAR GEDI disponibilizado no exemplo Gertec chama init() primeiro.
+            gedi.getMethod("init", Context.class).invoke(null, application);
+            Object instance = gedi.getMethod("getInstance", Context.class)
+                    .invoke(null, application);
             if (instance == null) {
                 return new Result(false, "SDK GEDI não inicializado na Gertec.");
             }
-            Object printer = gedi.getMethod("getPRNTR").invoke(instance);
+            Object printer = instance.getClass().getMethod("getPRNTR").invoke(instance);
             if (printer == null) {
                 return new Result(false, "Impressora da Gertec não disponível.");
             }
+            // A Gertec orienta inicializar antes de desenhar/imprimir.
+            // Status() após Init() evita sondar a impressora não inicializada.
+            printer.getClass().getMethod("Init").invoke(printer);
             Object status = printer.getClass().getMethod("Status").invoke(printer);
             if (status == null || !"OK".equals(status.toString())) {
-                return new Result(false, "Impressora: " + String.valueOf(status));
+                return new Result(false, "Impressora: " + String.valueOf(status)
+                        + ". Verifique bobina, tampa e serviço Gertec.");
             }
-            printer.getClass().getMethod("Init").invoke(printer);
 
             Class<?> configClass = Class.forName(
                     "br.com.gertec.gedi.structs.GEDI_PRNTR_st_PictureConfig");
@@ -62,8 +72,8 @@ final class GertecNativePrinter {
                     "Recibo enviado à impressora térmica. Confira a bobina.");
         } catch (ClassNotFoundException | NoClassDefFoundError ex) {
             return new Result(false,
-                    "SDK de impressão GEDI/PPComp GPOS780 não incluído no APK. "
-                    + "É necessário o pacote SDK oficial Gertec.");
+                    "Biblioteca GEDI compatível com GPOS780 indisponível neste APK. "
+                    + "Instale o SDK oficial GPOS780 para habilitar impressão térmica.");
         } catch (InvocationTargetException ex) {
             return new Result(false,
                     "A impressora térmica recusou o comando. "
