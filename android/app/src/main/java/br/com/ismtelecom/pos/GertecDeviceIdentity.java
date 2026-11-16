@@ -2,16 +2,14 @@ package br.com.ismtelecom.pos;
 
 import android.content.Context;
 import android.provider.Settings;
-import java.lang.reflect.InvocationTargetException;
-import java.util.Locale;
 
-/**
- * Identidade da GPOS780.
- *
- * O número de série físico vem exclusivamente do GEDI/IINFO.ControlNumberGet(SN).
- * ANDROID_ID é identificador da instalação Android, não é número de série.
- * Android 11 limita Build.getSerial() para apps comuns; não inventar serial.
- */
+import br.com.gertec.gedi.GEDI;
+import br.com.gertec.gedi.enums.GEDI_INFO_e_ControlNumber;
+import br.com.gertec.gedi.exceptions.GediException;
+import br.com.gertec.gedi.interfaces.IGEDI;
+import br.com.gertec.gedi.interfaces.IINFO;
+
+/** Serial de fábrica GPOS780 obtido pelo GEDI 2.2.6; ID Android é auxiliar. */
 final class GertecDeviceIdentity {
     static final class Identity {
         final String serial;
@@ -27,7 +25,6 @@ final class GertecDeviceIdentity {
 
     private GertecDeviceIdentity() {}
 
-    @SuppressWarnings({"unchecked", "rawtypes"})
     static Identity read(Context context) {
         String androidId = "";
         try {
@@ -37,49 +34,36 @@ final class GertecDeviceIdentity {
             androidId = androidId.trim();
             if (!androidId.matches("[A-Za-z0-9_-]{8,64}")) androidId = "";
         } catch (RuntimeException ignored) {
-            // A identificação Android é auxiliar, nunca condição de ativação.
+            // Não bloquear a UI caso o Android não permita o ID auxiliar.
         }
 
         try {
-            Class<?> gedi = Class.forName("br.com.gertec.gedi.GEDI");
             Context application = context.getApplicationContext();
             if (application == null) application = context;
-            gedi.getMethod("init", Context.class).invoke(null, application);
-            Object igedi = gedi.getMethod("getInstance", Context.class)
-                    .invoke(null, application);
-            if (igedi == null) {
-                return new Identity("", androidId, "GEDI não inicializado");
+            GEDI.init(application);
+            IGEDI gedi = GEDI.getInstance(application);
+            if (gedi == null) {
+                return new Identity("", androidId, "SDK GEDI indisponível");
             }
-
-            Object info = Class.forName("br.com.gertec.gedi.interfaces.IGEDI")
-                    .getMethod("getINFO").invoke(igedi);
+            IINFO info = gedi.getINFO();
             if (info == null) {
-                return new Identity("", androidId, "GEDI/INFO indisponível");
+                return new Identity("", androidId, "Módulo INFO não disponível");
             }
-
-            Class<?> snEnum = Class.forName(
-                    "br.com.gertec.gedi.enums.GEDI_INFO_e_ControlNumber");
-            Object sn = Enum.valueOf((Class) snEnum, "SN");
-            String serial = (String) Class.forName(
-                    "br.com.gertec.gedi.interfaces.IINFO")
-                    .getMethod("ControlNumberGet", snEnum)
-                    .invoke(info, sn);
-
+            String serial = info.ControlNumberGet(GEDI_INFO_e_ControlNumber.SN);
             serial = serial == null ? "" : serial.trim();
-            if (serial.isBlank() || serial.equalsIgnoreCase("unknown")
-                    || serial.equals("0") || serial.equalsIgnoreCase("null")
-                    || serial.length() > 64
-                    || !serial.matches("[A-Za-z0-9._-]{4,64}")) {
-                return new Identity("", androidId, "Serial GEDI não disponível");
+            if (serial.length() < 4 || serial.length() > 64
+                    || !serial.matches("[A-Za-z0-9._-]{4,64}")
+                    || serial.equalsIgnoreCase("unknown")
+                    || serial.equalsIgnoreCase("null")) {
+                return new Identity("", androidId, "Serial não retornado pelo GEDI");
             }
-            return new Identity(serial, androidId, "Serial de fábrica via Gertec GEDI");
-        } catch (ClassNotFoundException | NoClassDefFoundError ex) {
-            return new Identity("", androidId,
-                    "SDK GEDI não incluído na compilação");
-        } catch (InvocationTargetException ex) {
-            return new Identity("", androidId,
-                    "GEDI não autorizou a consulta do serial");
-        } catch (ReflectiveOperationException | LinkageError | RuntimeException ex) {
+            return new Identity(serial, androidId,
+                    "Nº de série físico informado pelo GEDI");
+        } catch (GediException error) {
+            return new Identity("", androidId, "GEDI não autorizou a consulta do serial");
+        } catch (LinkageError error) {
+            return new Identity("", androidId, "Biblioteca GEDI incompatível");
+        } catch (RuntimeException error) {
             return new Identity("", androidId, "Falha na consulta ao GEDI");
         }
     }
