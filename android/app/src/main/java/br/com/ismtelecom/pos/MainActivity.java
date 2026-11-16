@@ -49,6 +49,8 @@ import androidx.core.content.FileProvider;
 import com.google.zxing.BarcodeFormat;
 import com.google.zxing.MultiFormatWriter;
 import com.google.zxing.common.BitMatrix;
+import com.google.zxing.integration.android.IntentIntegrator;
+import com.google.zxing.integration.android.IntentResult;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -80,7 +82,7 @@ public class MainActivity extends Activity {
     private static final int MUTED = Color.rgb(103, 126, 143);
     private static final int GREEN = Color.rgb(58, 169, 109);
     private static final int RED = Color.rgb(202, 66, 103);
-    private static final long SESSION_MILLIS = 60_000L; // Mesmo TTL do backend.
+    private static final long SESSION_MILLIS = 300_000L; // Mesmo TTL do backend: 5 minutos.
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler ui = new Handler(Looper.getMainLooper());
     private LinearLayout content;
@@ -97,6 +99,7 @@ public class MainActivity extends Activity {
     private ParcelFileDescriptor pdfDescriptor;
     private int currentPage = 0;
     private String pixWatchingInvoiceId = "";
+    private String currentPaymentInvoiceId = "";
     private TextView pixStatus;
 
     private final Runnable pixAutoCheck = new Runnable() {
@@ -191,65 +194,15 @@ public class MainActivity extends Activity {
         content.addView(b, margins(-1, dp(53), 12));
     }
 
-    /** Marca ISM desenhada em vetor: o antigo ism_logo.png do APK está truncado. */
+    /** Logo oficial: proporção original e sem desenho manual inclinado. */
     private View logo(int height) {
-        return new View(this) {
-            private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-
-            @Override protected void onDraw(Canvas canvas) {
-                super.onDraw(canvas);
-                float width = getWidth(), fullHeight = getHeight();
-                float scale = Math.min((width - dp(8)) / 250f,
-                                       (fullHeight - dp(4)) / 105f);
-                if (scale <= 0f) return;
-                canvas.save();
-                canvas.translate((width - 250f * scale) / 2f,
-                                 (fullHeight - 105f * scale) / 2f);
-                canvas.scale(scale, scale);
-
-                // Velocímetro em azul, como na marca ISM Telecom.
-                paint.setStyle(Paint.Style.STROKE);
-                paint.setStrokeCap(Paint.Cap.ROUND);
-                paint.setStrokeWidth(8.2f);
-                paint.setColor(Color.rgb(24, 128, 180));
-                canvas.drawArc(new RectF(8, 9, 114, 116), 196f, 135f, false, paint);
-
-                paint.setStrokeWidth(4f);
-                paint.setColor(Color.rgb(53, 178, 202));
-                canvas.drawArc(new RectF(21, 22, 101, 102), 195f, 128f, false, paint);
-
-                paint.setStyle(Paint.Style.FILL);
-                paint.setColor(Color.rgb(9, 79, 131));
-                for (int i = 0; i < 7; i++) {
-                    float angle = (float) Math.toRadians(209f + i * 15.5f);
-                    float radius = 46f;
-                    float cx = 61f + (float) Math.cos(angle) * radius;
-                    float cy = 63f + (float) Math.sin(angle) * radius;
-                    canvas.drawCircle(cx, cy, 2.2f, paint);
-                }
-
-                paint.setColor(Color.rgb(194, 52, 74));
-                paint.setStrokeWidth(2.9f);
-                paint.setStyle(Paint.Style.STROKE);
-                canvas.drawLine(68f, 57f, 99f, 27f, paint);
-
-                paint.setStyle(Paint.Style.FILL);
-                paint.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
-                paint.setTextSize(46f);
-                paint.setColor(Color.rgb(47, 146, 175));
-                canvas.drawText("ISM", 79f, 66f, paint);
-
-                paint.setTextSize(24f);
-                paint.setColor(Color.rgb(7, 66, 119));
-                canvas.drawText("Telecom", 91f, 90f, paint);
-
-                paint.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-                paint.setTextSize(10.5f);
-                paint.setColor(Color.rgb(60, 156, 174));
-                canvas.drawText("100% Fibra Óptica", 91f, 102f, paint);
-                canvas.restore();
-            }
-        };
+        ImageView image = new ImageView(this);
+        image.setImageBitmap(IsmOfficialLogo.decode(this));
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setAdjustViewBounds(false);
+        image.setContentDescription("ISM Telecom - 100% Fibra Óptica");
+        image.setPadding(dp(3), dp(3), dp(3), dp(3));
+        return image;
     }
 
     private void initScreen(String title, String subtitle, boolean back) {
@@ -269,19 +222,21 @@ public class MainActivity extends Activity {
             goBack.setGravity(Gravity.CENTER);
             goBack.setContentDescription("Voltar para a tela anterior");
             goBack.setOnClickListener(v -> backToInvoicesOrHome());
-            header.addView(goBack, new LinearLayout.LayoutParams(dp(77), dp(58)));
-        } else {
-            header.addView(new View(this), new LinearLayout.LayoutParams(dp(77), dp(58)));
+            header.addView(goBack, new LinearLayout.LayoutParams(dp(79), dp(58)));
         }
-        View brand = logo(back ? 58 : 102);
-        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(0, dp(back ? 58 : 102), 1);
+        // Na tela inicial a marca ocupa toda a largura disponível.
+        View brand = logo(back ? 72 : 176);
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(
+                0, dp(back ? 72 : 176), 1);
         header.addView(brand, logoParams);
-        TextView exit = label("Sair ×", 13, NAVY, true);
-        exit.setGravity(Gravity.CENTER);
-        exit.setContentDescription("Sair do aplicativo ISM Telecom");
-        exit.setOnClickListener(v -> confirmExit());
-        header.addView(exit, new LinearLayout.LayoutParams(dp(77), dp(58)));
-        content.addView(header, margins(-1, -2, back ? 10 : 34));
+        if (back) {
+            TextView home = label("⌂ Início", 13, NAVY, true);
+            home.setGravity(Gravity.CENTER);
+            home.setContentDescription("Voltar à tela inicial sem encerrar o aplicativo");
+            home.setOnClickListener(v -> showHome());
+            header.addView(home, new LinearLayout.LayoutParams(dp(79), dp(58)));
+        }
+        content.addView(header, margins(-1, -2, back ? 10 : 18));
 
         if (!title.isEmpty()) {
             TextView heading = label(title, 23, NAVY, true);
@@ -308,6 +263,13 @@ public class MainActivity extends Activity {
     private void backToInvoicesOrHome() {
         switch (screenType) {
             case "payment":
+                if (invoiceResponse != null && isSessionValid()
+                        && !currentPaymentInvoiceId.isEmpty())
+                    showPaymentOptions(currentPaymentInvoiceId);
+                else if (invoiceResponse != null && isSessionValid()) renderInvoices();
+                else showHome();
+                break;
+            case "payment-options":
                 if (invoiceResponse != null && isSessionValid()) renderInvoices();
                 else showHome();
                 break;
@@ -319,10 +281,12 @@ public class MainActivity extends Activity {
                 else showLookup();
                 break;
             case "receipt":
-                showLookup();
+                if (invoiceResponse != null && isSessionValid()) renderInvoices();
+                else showLookup();
                 break;
             case "home":
-                confirmExit();
+                // Kiosk: o botão Voltar nunca fecha o app nem revela o Android.
+                showHome();
                 break;
             default:
                 showHome();
@@ -357,8 +321,8 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Ativação única para homologação supervisionada. Nunca embutir TERMINAL_KEY
-     * no APK, nem permitir edição pelo menu depois de ativado.
+     * Ativação pela câmera, sem mostrar a chave permanente em um QR.
+     * O servidor pode emitir um QR compartilhado que serve para todas as maquinetas.
      */
     private void showTerminalSetup() {
         if (terminalConfigured()) {
@@ -369,18 +333,34 @@ public class MainActivity extends Activity {
         closePdf();
         screenType = "setup";
         initScreen("Ativar terminal ISM",
-                "Configuração única. Informe a chave de terminal fornecida pelo administrador ISM.",
+                "Escaneie o QR Code enviado pelo administrador para ativar automaticamente.",
                 false);
         content.addView(label("Servidor: " + apiBase(), 13, NAVY, true),
-                margins(-1, -2, 18));
+                margins(-1, -2, 16));
+
+        Button scan = button("Escanear QR Code de ativação", CYAN, true);
+        scan.setOnClickListener(v -> scanActivationQRCode());
+        content.addView(scan, margins(-1, dp(72), 14));
+        content.addView(label(
+                "O mesmo QR Code pode ativar todas as maquinetas ISM. "
+                + "Se o administrador o revogar, solicite a imagem atualizada.",
+                13, MUTED, false), margins(-1, -2, 18));
+
+        Button manual = button("Ativar digitando a chave (alternativa)", NAVY, false);
+        manual.setOnClickListener(v -> {
+            manual.setEnabled(false);
+            showManualActivationFields();
+        });
+        content.addView(manual, margins(-1, dp(52), 10));
+    }
+
+    private void showManualActivationFields() {
+        content.addView(label("Digite a chave apenas se não puder escanear o QR Code.",
+                13, MUTED, false), margins(-1, -2, 12));
         EditText credential = field("Chave de ativação do terminal",
                 InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         credential.setSelectAllOnFocus(true);
-        content.addView(label("A chave será conferida pelo servidor antes de ser salva. " +
-                        "Depois de ativado, o campo não será exibido novamente no aplicativo.",
-                12, MUTED, false), margins(-1, -2, 16));
-
-        Button activate = button("Ativar maquininha", CYAN, true);
+        Button activate = button("Ativar maquininha com chave", NAVY, true);
         activate.setOnClickListener(v -> {
             if (loading || terminalConfigured()) return;
             String candidate = credential.getText().toString().trim();
@@ -392,6 +372,126 @@ public class MainActivity extends Activity {
             validateAndSaveTerminalKey(candidate, activate, credential);
         });
         content.addView(activate, margins(-1, dp(54), 8));
+    }
+
+    private void scanActivationQRCode() {
+        if (loading || terminalConfigured()) return;
+        if (!getPackageManager().hasSystemFeature("android.hardware.camera.any")) {
+            dialog("Esta maquineta não possui câmera disponível. Utilize a chave manual.");
+            return;
+        }
+        try {
+            new IntentIntegrator(this)
+                    .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
+                    .setBeepEnabled(false)
+                    .setOrientationLocked(true)
+                    .setPrompt("Aponte a câmera para o QR Code de ativação ISM")
+                    .initiateScan();
+        } catch (Exception error) {
+            dialog("Não foi possível abrir a câmera. Utilize a chave manual.");
+        }
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        IntentResult scanned = IntentIntegrator.parseActivityResult(
+                requestCode, resultCode, data);
+        if (scanned == null) {
+            super.onActivityResult(requestCode, resultCode, data);
+            return;
+        }
+        if (terminalConfigured() || !"setup".equals(screenType)) return;
+        String payload = scanned.getContents();
+        if (payload == null) return; // Digitalização cancelada.
+        final String prefix = "ISM-ACT1:";
+        if (!payload.startsWith(prefix)
+                || !payload.substring(prefix.length()).matches("[A-Za-z0-9_-]{43}")) {
+            dialog("QR Code inválido. Peça a imagem gerada pelo servidor ISM.");
+            return;
+        }
+        activateFromQr(payload.substring(prefix.length()));
+    }
+
+    private void activateFromQr(String code) {
+        if (loading || terminalConfigured()) return;
+        loading = true;
+        final int epoch = requestEpoch;
+        ProgressBar progress = new ProgressBar(this);
+        content.addView(progress, margins(-1, dp(45), 10));
+        executor.execute(() -> {
+            HttpURLConnection conn = null;
+            String key = "";
+            String error = "Não foi possível ativar. Verifique a conexão da maquineta.";
+            try {
+                conn = (HttpURLConnection) new URL(
+                        apiBase().replaceAll("/+$", "") + "/api/v1/terminal/ativar-qr"
+                ).openConnection();
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(15000);
+                conn.setDoOutput(true);
+                conn.setUseCaches(false);
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setRequestProperty("Accept", "application/json");
+                conn.setRequestProperty("Cache-Control", "no-store");
+                JSONObject data = new JSONObject();
+                data.put("codigo", code);
+                try (OutputStream out = conn.getOutputStream()) {
+                    out.write(data.toString().getBytes(StandardCharsets.UTF_8));
+                }
+                int status = conn.getResponseCode();
+                if (status == 200) {
+                    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                    try (InputStream input = conn.getInputStream()) {
+                        byte[] bytes = new byte[1024];
+                        int read;
+                        while ((read = input.read(bytes)) != -1) {
+                            buffer.write(bytes, 0, read);
+                            if (buffer.size() > 4096)
+                                throw new IOException("Resposta de ativação muito grande");
+                        }
+                    }
+                    JSONObject json = new JSONObject(buffer.toString("UTF-8"));
+                    if (json.optBoolean("autorizado", false)) {
+                        String secret = json.optString("terminal_key", "");
+                        if (secret.length() >= 32 && secret.length() <= 512) {
+                            key = secret;
+                        }
+                    }
+                } else if (status == 401 || status == 422) {
+                    error = "QR Code inválido, revogado ou expirado. Solicite ao administrador.";
+                } else if (status == 404) {
+                    error = "Atualize o backend ISM para v0.11.6 antes de ativar por QR.";
+                } else {
+                    error = "Servidor não autorizou a ativação (HTTP " + status + ").";
+                }
+            } catch (Exception ex) {
+                error = "Falha de conexão. Confirme a internet e o servidor ISM.";
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+            final String receivedKey = key;
+            final String failure = error;
+            ui.post(() -> {
+                if (epoch != requestEpoch) return;
+                loading = false;
+                removeProgress(progress);
+                if (receivedKey.isEmpty()) {
+                    dialog(failure);
+                    return;
+                }
+                try {
+                    TerminalKeyStore.save(this, receivedKey);
+                    if (!terminalConfigured())
+                        throw new IOException("Não foi possível conferir chave protegida");
+                    showHome();
+                    dialog("Maquineta ISM ativada automaticamente pelo QR Code!");
+                } catch (IOException ex) {
+                    dialog("Não foi possível guardar a ativação protegida neste aparelho.");
+                }
+            });
+        });
     }
 
     private void validateAndSaveTerminalKey(String candidate, Button activate, EditText entry) {
@@ -520,6 +620,7 @@ public class MainActivity extends Activity {
         session = "";
         invoiceResponse = null;
         filterMode = 0;
+        currentPaymentInvoiceId = "";
         requestEpoch++;
     }
 
@@ -532,10 +633,7 @@ public class MainActivity extends Activity {
         resetSession();
         closePdf();
         initScreen("", "", false);
-        TextView greeting = label("Como podemos ajudar?", 21, NAVY, true);
-        greeting.setGravity(Gravity.CENTER);
-        content.addView(greeting, margins(-1, -2, 22));
-
+        // Sem saudação: espaço visual dedicado à logomarca ISM.
         Button contract = button("Quero contratar", NAVY, false);
         contract.setOnClickListener(v -> showLead());
         content.addView(contract, margins(-1, dp(86), 14));
@@ -551,6 +649,53 @@ public class MainActivity extends Activity {
         TextView provisioned = label("Terminal autorizado para consultas ISM", 11, MUTED, false);
         provisioned.setGravity(Gravity.CENTER);
         content.addView(provisioned, margins(-1, -2, 8));
+
+        LinearLayout deviceInfo = col();
+        deviceInfo.setPadding(dp(12), dp(10), dp(12), dp(10));
+        deviceInfo.setBackground(shape(Color.WHITE, 10, Color.rgb(218, 231, 239)));
+        TextView serialText = label("Nº de série Gertec: consultando...", 13, NAVY, true);
+        deviceInfo.addView(serialText, margins(-1, -2, 5));
+        TextView auxiliary = label("", 11, MUTED, false);
+        deviceInfo.addView(auxiliary, margins(-1, -2, 2));
+        Button copyIdentity = button("Copiar identificação do terminal", NAVY, false);
+        copyIdentity.setTextSize(11);
+        copyIdentity.setEnabled(false);
+        deviceInfo.addView(copyIdentity, margins(-1, dp(43), 0));
+        content.addView(deviceInfo, margins(-1, -2, 12));
+
+        final int homeEpoch = requestEpoch;
+        executor.execute(() -> {
+            GertecDeviceIdentity.Identity device = GertecDeviceIdentity.read(
+                    getApplicationContext());
+            ui.post(() -> {
+                if (homeEpoch != requestEpoch || !"home".equals(screenType)) return;
+                if (!device.serial.isEmpty()) {
+                    serialText.setText("Nº de série Gertec: " + device.serial);
+                    auxiliary.setText("Identificação física da maquineta (GEDI)");
+                } else {
+                    serialText.setText("Nº de série Gertec: indisponível");
+                    auxiliary.setText(device.androidId.isEmpty()
+                            ? "Diagnóstico: " + device.diagnostic
+                            : "ID Android (não é serial): " + device.androidId
+                                    + "\\n" + device.diagnostic);
+                }
+                String valueToCopy = !device.serial.isEmpty()
+                        ? "Serial Gertec: " + device.serial
+                        : (device.androidId.isEmpty() ? ""
+                           : "ID Android (não é serial): " + device.androidId);
+                copyIdentity.setEnabled(!valueToCopy.isEmpty());
+                copyIdentity.setOnClickListener(v -> {
+                    ClipboardManager clipboard = (ClipboardManager)
+                            getSystemService(Context.CLIPBOARD_SERVICE);
+                    if (clipboard != null) {
+                        clipboard.setPrimaryClip(
+                                ClipData.newPlainText("Identificação ISM", valueToCopy));
+                        Toast.makeText(this, "Identificação copiada",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                });
+            });
+        });
     }
 
     private void showLookup() {
@@ -605,7 +750,7 @@ public class MainActivity extends Activity {
         JSONArray invoices = invoiceResponse.optJSONArray("faturas");
         int count = invoices == null ? 0 : invoices.length();
         initScreen("Boletos e\npagamentos",
-                "Olá! Encontramos " + count + (count == 1 ? " fatura disponível." : " faturas disponíveis."), true);
+                count + (count == 1 ? " fatura disponível." : " faturas disponíveis."), true);
         showCustomerInfo();
 
         JSONObject wa = invoiceResponse.optJSONObject("whatsapp");
@@ -786,8 +931,8 @@ public class MainActivity extends Activity {
 
         LinearLayout actions = new LinearLayout(this);
         actions.setPadding(dp(8), 0, dp(8), 0);
-        addCardAction(actions, "Imprimir\nboleto", () -> getBoleto(id, "imprimir"));
-        addCardAction(actions, "Enviar\nboleto", () -> getBoleto(id, "enviar"));
+        addCardAction(actions, "Imprimir\ncódigo", () -> printBarcodeOnly(id));
+        addCardAction(actions, "Enviar\nboleto", () -> emailBoleto(id));
         addCardAction(actions, "Pagar\nboleto", () -> showPaymentOptions(id));
         card.addView(actions);
         content.addView(card, margins(-1, -2, 14));
@@ -804,32 +949,147 @@ public class MainActivity extends Activity {
         actions.addView(b, p);
     }
 
+
+    /** Opções claras em cards, sem oferecer cartão antes da homologação TEF. */
     private void showPaymentOptions(String id) {
-        if (!isSessionValid()) { showHome(); dialog("Sessão expirada. Faça nova consulta."); return; }
-        new AlertDialog.Builder(this).setTitle("Como deseja pagar?")
-                .setItems(new String[]{"PIX (QR Code)", "Código de barras", "Visualizar boleto PDF"},
-                        (d, item) -> requestPayment(id, new String[]{"pix", "barra", "boleto"}[item]))
-                .show();
+        if (!isSessionValid()) {
+            showHome(); dialog("Sessão expirada. Faça nova consulta."); return;
+        }
+        currentPaymentInvoiceId = id;
+        screenType = "payment-options";
+        stopPixAutoCheck();
+        closePdf();
+        initScreen("Escolha como pagar",
+                "Selecione uma opção para a fatura IXC nº " + id, true);
+        Button pix = button("▦  Pagar com PIX (QR Code)", CYAN, true);
+        pix.setOnClickListener(v -> requestPayment(id, "pix"));
+        content.addView(pix, margins(-1, dp(75), 15));
+        Button barcode = button("▥  Código de barras", NAVY, false);
+        barcode.setOnClickListener(v -> requestPayment(id, "barra"));
+        content.addView(barcode, margins(-1, dp(75), 15));
+        Button pdf = button("▤  Visualizar boleto PDF", NAVY, false);
+        pdf.setOnClickListener(v -> requestPayment(id, "boleto"));
+        content.addView(pdf, margins(-1, dp(75), 15));
+        content.addView(label("Cartão de crédito e débito permanece em homologação " +
+                "e não está habilitado nesta versão.", 12, MUTED, false));
     }
 
-    private void getBoleto(String id, String operation) {
-        if (!isSessionValid()) { showHome(); dialog("Sessão expirada. Faça nova consulta."); return; }
+    /** IXC envia pelo próprio e-mail cadastrado; não precisa de SMTP nem WhatsApp no POS. */
+    private void emailBoleto(String id) {
+        if (!isSessionValid()) {
+            showHome();
+            dialog("Sessão expirada. Faça nova consulta.");
+            return;
+        }
+        JSONObject emailInfo = invoiceResponse == null ? null
+                : invoiceResponse.optJSONObject("boleto_email");
+        if (emailInfo == null) {
+            dialog("Atualize primeiro o servidor ISM para usar o envio de boleto pelo IXC.");
+            return;
+        }
+        if (!emailInfo.optBoolean("disponivel", false)) {
+            dialog("O servidor ISM ainda não disponibiliza o envio pelo IXC. Atualize o backend.");
+            return;
+        }
+        final String masked = emailInfo.optString("destinatario_mascarado", "");
+        new AlertDialog.Builder(this)
+                .setTitle("Enviar boleto por e-mail")
+                .setMessage("Enviar a fatura " + id + " para o e-mail cadastrado no IXC"
+                        + (masked.isEmpty()
+                            ? ". O destinatário não foi informado pela API de cadastro."
+                            : " (cadastro indica " + masked + ").")
+                        + "\\nO IXC escolherá o destinatário. Confirme no cadastro antes de enviar.")
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Confirmar envio", (d, which) -> {
+                    if (!isSessionValid()) {
+                        showHome();
+                        dialog("Sessão expirada. Faça nova consulta.");
+                        return;
+                    }
+                    JSONObject request = new JSONObject();
+                    try {
+                        request.put("session", session);
+                        request.put("confirmar_envio", true);
+                    } catch (JSONException ex) {
+                        dialog("Erro ao preparar envio.");
+                        return;
+                    }
+                    call("/api/v1/faturas/" + id + "/enviar-email", request, result -> {
+                        if (result.optBoolean("solicitacao_aceita", false)) {
+                            dialog("O IXC aceitou a solicitação de e-mail da fatura " + id
+                                    + ". Verifique a fila/log de e-mails do IXC e o recebimento. "
+                                    + "A API não comprova a entrega.");
+                        } else {
+                            dialog("O IXC não confirmou o pedido de envio.");
+                        }
+                    });
+                }).show();
+    }
+
+    /** Cupom estreito para a bobina térmica, sem abrir PDF ou Android PrintManager. */
+    private void printBarcodeOnly(String id) {
+        if (!isSessionValid()) {
+            showHome();
+            dialog("Sessão expirada. Consulte novamente.");
+            return;
+        }
         JSONObject request = new JSONObject();
         try { request.put("session", session); } catch (JSONException ignored) {}
-        call("/api/v1/faturas/" + id + "/boleto", request, result -> {
-            String encoded = result.optString("pdf_base64");
-            if (encoded.isEmpty()) {
-                dialog("Esta cobrança não disponibilizou o PDF para " + operation + ".");
+        call("/api/v1/faturas/" + id + "/barra", request, result -> {
+            String number;
+            try {
+                number = BrazilianBoletoBarcode.convert(result.optString("codigo", ""));
+            } catch (IllegalArgumentException ex) {
+                dialog("O IXC não forneceu um código bancário válido para esta cobrança.");
                 return;
             }
+            String issued = result.optString("emissao", "");
+            String due = result.optString("vencimento", "");
+            String value = result.optString("valor", "");
+
+            Bitmap receipt;
             try {
-                savePdf(encoded);
-                if ("enviar".equals(operation)) sharePdf();
-                else printPdf();
-            } catch (Exception err) {
-                dialog("Não foi possível preparar o boleto PDF.");
+                receipt = ThermalReceipt.render(
+                        id,
+                        issued.isEmpty() ? "" : dateBR(issued),
+                        dateBR(due),
+                        money(value),
+                        number
+                );
+            } catch (Exception ex) {
+                dialog("Não foi possível preparar o recibo térmico. Verifique os dados do IXC.");
+                return;
             }
+
+            executor.execute(() -> {
+                GertecNativePrinter.Result printed = GertecNativePrinter.print(getApplicationContext(), receipt);
+                ui.post(() -> {
+                    if (printed.submitted) {
+                        dialog(printed.detail);
+                    } else {
+                        showThermalPreview(receipt, printed.detail);
+                    }
+                });
+            });
         });
+    }
+
+    /** Em caso de SDK ausente mostra o layout real e o diagnóstico; não finge imprimir. */
+    private void showThermalPreview(Bitmap receipt, String reason) {
+        LinearLayout layout = col();
+        layout.setPadding(dp(14), dp(9), dp(14), dp(9));
+        TextView warning = label(reason, 13, RED, true);
+        layout.addView(warning, margins(-1, -2, 12));
+        ImageView image = new ImageView(this);
+        image.setImageBitmap(receipt);
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setAdjustViewBounds(true);
+        layout.addView(image, margins(-1, dp(360), 4));
+        new AlertDialog.Builder(this)
+                .setTitle("Prévia de recibo térmico")
+                .setView(layout)
+                .setPositiveButton("Fechar", null)
+                .show();
     }
 
     private void requestPayment(String id, String kind) {
@@ -851,6 +1111,16 @@ public class MainActivity extends Activity {
             content.addView(label("PIX copia e cola", 18, NAVY, true), margins(-1, -2, 12));
             displayQr(code);
             displayCode(code);
+            primary("⇧  Compartilhar código PIX", v -> {
+                try {
+                    Intent send = new Intent(Intent.ACTION_SEND);
+                    send.setType("text/plain");
+                    send.putExtra(Intent.EXTRA_TEXT, code);
+                    startActivity(Intent.createChooser(send, "Compartilhar PIX"));
+                } catch (Exception ex) {
+                    dialog("Nenhum aplicativo disponível para compartilhar o código PIX.");
+                }
+            });
             TextView help = label("O aplicativo verifica o PIX no IXC a cada 8 segundos, " +
                     "enquanto esta tela e a sessão estiverem ativas. " +
                     "O QR Code sozinho não comprova pagamento.", 12, MUTED, false);
@@ -859,7 +1129,10 @@ public class MainActivity extends Activity {
             pixWatchingInvoiceId = invoiceId;
             pixStatus = label("Aguardando a confirmação do PIX no IXC...", 14, NAVY, true);
             content.addView(pixStatus, margins(-1, -2, 12));
-            primary("Verificar pagamento agora", v -> checkPixPayment(invoiceId, false));
+            primary("✓  Verificar pagamento PIX", v -> checkPixPayment(invoiceId, false));
+            Button back = button("← Voltar às cobranças", NAVY, false);
+            back.setOnClickListener(v -> renderInvoices());
+            content.addView(back, margins(-1, dp(50), 12));
             ui.postDelayed(pixAutoCheck, 6000);
         } else if ("barra".equals(kind)) {
             content.addView(label("Linha digitável", 18, NAVY, true), margins(-1, -2, 12));
@@ -870,8 +1143,11 @@ public class MainActivity extends Activity {
             if (!encoded.isEmpty()) {
                 try {
                     displayPdf(encoded);
-                    primary("Enviar boleto", v -> sharePdf());
-                    primary("Imprimir boleto", v -> printPdf());
+                    primary("Enviar boleto por e-mail (IXC)",
+                            v -> emailBoleto(String.valueOf(result.optString("id"))));
+                    primary("Imprimir código na térmica",
+                            v -> printBarcodeOnly(String.valueOf(result.optString("id"))));
+                    primary("Compartilhar arquivo PDF", v -> sharePdf());
                 } catch (Exception ex) { dialog("Não foi possível abrir o PDF recebido."); }
             } else if (link.startsWith("https://")) {
                 primary("Abrir boleto", v -> {
@@ -1273,12 +1549,23 @@ public class MainActivity extends Activity {
 
     private void printPdf() {
         if (tempPdf == null || !tempPdf.exists()) {
-            dialog("Boleto indisponível. Abra novamente."); return;
+            dialog("Documento para impressão indisponível. Abra novamente."); return;
+        }
+        if (!getPackageManager().hasSystemFeature("android.software.print")) {
+            dialog("O sistema da maquininha não disponibiliza impressão pelo Android. " +
+                    "A impressora térmica Gertec precisa do SDK/serviço do fabricante.");
+            return;
         }
         final File file = tempPdf;
+        final boolean onlyBarcode = file.getName().contains("codigo_barras");
         try {
             PrintManager printer = (PrintManager) getSystemService(Context.PRINT_SERVICE);
-            printer.print("Boleto ISM Telecom", new PrintDocumentAdapter() {
+            if (printer == null) {
+                dialog("Serviço de impressão Android indisponível neste terminal.");
+                return;
+            }
+            printer.print(onlyBarcode ? "Código de barras ISM" : "Boleto ISM Telecom",
+                    new PrintDocumentAdapter() {
                 @Override public void onLayout(PrintAttributes oldAttributes, PrintAttributes newAttributes,
                         CancellationSignal cancellation, LayoutResultCallback callback, Bundle extras) {
                     if (cancellation.isCanceled()) { callback.onLayoutCancelled(); return; }
@@ -1307,7 +1594,8 @@ public class MainActivity extends Activity {
                 }
             }, null);
         } catch (Exception ex) {
-            dialog("Impressão exige serviço Android compatível. A impressora interna Gertec depende do SDK oficial.");
+            dialog("A impressora interna Gertec não foi acessada pelo serviço Android. " +
+                    "Será necessário integrar o SDK de impressão fornecido pela Gertec/Getnet.");
         }
     }
 
