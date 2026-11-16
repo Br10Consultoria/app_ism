@@ -657,6 +657,10 @@ public class MainActivity extends Activity {
         deviceInfo.addView(serialText, margins(-1, -2, 5));
         TextView auxiliary = label("", 11, MUTED, false);
         deviceInfo.addView(auxiliary, margins(-1, -2, 2));
+        Button copyIdentity = button("Copiar identificação do terminal", NAVY, false);
+        copyIdentity.setTextSize(11);
+        copyIdentity.setEnabled(false);
+        deviceInfo.addView(copyIdentity, margins(-1, dp(43), 0));
         content.addView(deviceInfo, margins(-1, -2, 12));
 
         final int homeEpoch = requestEpoch;
@@ -675,6 +679,21 @@ public class MainActivity extends Activity {
                             : "ID Android (não é serial): " + device.androidId
                                     + "\\n" + device.diagnostic);
                 }
+                String valueToCopy = !device.serial.isEmpty()
+                        ? "Serial Gertec: " + device.serial
+                        : (device.androidId.isEmpty() ? ""
+                           : "ID Android (não é serial): " + device.androidId);
+                copyIdentity.setEnabled(!valueToCopy.isEmpty());
+                copyIdentity.setOnClickListener(v -> {
+                    ClipboardManager clipboard = (ClipboardManager)
+                            getSystemService(Context.CLIPBOARD_SERVICE);
+                    if (clipboard != null) {
+                        clipboard.setPrimaryClip(
+                                ClipData.newPlainText("Identificação ISM", valueToCopy));
+                        Toast.makeText(this, "Identificação copiada",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                });
             });
         });
     }
