@@ -1096,8 +1096,11 @@ public class MainActivity extends Activity {
             if (!encoded.isEmpty()) {
                 try {
                     displayPdf(encoded);
-                    primary("Enviar boleto", v -> sharePdf());
-                    primary("Imprimir boleto", v -> printPdf());
+                    primary("Enviar boleto por e-mail (IXC)",
+                            v -> emailBoleto(String.valueOf(result.optString("id"))));
+                    primary("Imprimir código na térmica",
+                            v -> printBarcodeOnly(String.valueOf(result.optString("id"))));
+                    primary("Compartilhar arquivo PDF", v -> sharePdf());
                 } catch (Exception ex) { dialog("Não foi possível abrir o PDF recebido."); }
             } else if (link.startsWith("https://")) {
                 primary("Abrir boleto", v -> {
