@@ -240,7 +240,7 @@ class IXC:
             "multa": "N",
             "atualiza_boleto": "N",
             "tipo_boleto": "mail",
-        }, method="GET", include_ixcsoft=True)
+        }, method="POST", include_ixcsoft=False)
         registros = result.get("registros") if isinstance(result, dict) else None
         if not isinstance(registros, list) or not any(
             isinstance(item, dict) and item.get("sucesso") is True
