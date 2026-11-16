@@ -40,14 +40,18 @@ final class GertecNativePrinter {
             if (instance == null) {
                 return new Result(false, "SDK GEDI não inicializado na Gertec.");
             }
-            Object printer = instance.getClass().getMethod("getPRNTR").invoke(instance);
+            // Invocar via interfaces públicas é compatível com implementações
+            // que não expõem uma classe concreta pública no APK do SDK.
+            Class<?> igedi = Class.forName("br.com.gertec.gedi.interfaces.IGEDI");
+            Object printer = igedi.getMethod("getPRNTR").invoke(instance);
             if (printer == null) {
                 return new Result(false, "Impressora da Gertec não disponível.");
             }
             // A Gertec orienta inicializar antes de desenhar/imprimir.
             // Status() após Init() evita sondar a impressora não inicializada.
-            printer.getClass().getMethod("Init").invoke(printer);
-            Object status = printer.getClass().getMethod("Status").invoke(printer);
+            Class<?> iprntr = Class.forName("br.com.gertec.gedi.interfaces.IPRNTR");
+            iprntr.getMethod("Init").invoke(printer);
+            Object status = iprntr.getMethod("Status").invoke(printer);
             if (status == null || !"OK".equals(status.toString())) {
                 return new Result(false, "Impressora: " + String.valueOf(status)
                         + ". Verifique bobina, tampa e serviço Gertec.");
@@ -64,10 +68,10 @@ final class GertecNativePrinter {
             configClass.getField("height").setInt(config, receipt.getHeight());
             configClass.getField("offset").setInt(config, 0);
 
-            printer.getClass().getMethod(
+            iprntr.getMethod(
                     "DrawPictureExt", configClass, Bitmap.class
             ).invoke(printer, config, receipt);
-            printer.getClass().getMethod("Output").invoke(printer);
+            iprntr.getMethod("Output").invoke(printer);
             return new Result(true,
                     "Recibo enviado à impressora térmica. Confira a bobina.");
         } catch (ClassNotFoundException | NoClassDefFoundError ex) {
