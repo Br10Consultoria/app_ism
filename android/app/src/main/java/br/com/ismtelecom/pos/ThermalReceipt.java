@@ -4,7 +4,6 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.Rect;
 import android.graphics.Typeface;
 
 import com.google.zxing.BarcodeFormat;
@@ -21,7 +20,7 @@ import java.util.Collections;
  */
 final class ThermalReceipt {
     private static final int WIDTH = 384;
-    private static final int HEIGHT = 565;
+    private static final int HEIGHT = 610;
 
     private ThermalReceipt() {}
 
