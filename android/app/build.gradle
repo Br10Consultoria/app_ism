@@ -8,8 +8,8 @@ android {
         applicationId 'br.com.ismtelecom.pos'
         minSdk 26
         targetSdk 35
-        versionCode 21
-        versionName '0.11.9'
+        versionCode 22
+        versionName '0.12.0'
         def url = (project.findProperty('ismBackendUrl') ?: 'https://app.ismtelecom.com.br').toString()
         buildConfigField 'String', 'API_BASE', '"' + url.replace('\\', '\\\\').replace('"', '\\"') + '"'
     }
@@ -18,8 +18,8 @@ android {
 }
 
 dependencies {
-    // SDK GEDI/PPComp oficial da Gertec GPOS780 (AARs sob autorizacao do fabricante)
-    // Ausentes por padrao: o app mostra diagnostico e previa, nunca finge imprimir.
+    // GEDI 2.2.6 / PPComp 1.39 / HCL 1.0.10, firmware 988B (SDK privado).
+    // O CI valida hashes e extrai os AARs antes do build; ausencias falham o build.
     implementation fileTree(dir: 'libs', include: ['*.aar', '*.jar'])
     implementation 'com.google.zxing:core:3.5.3'
     implementation 'androidx.core:core:1.13.1'
