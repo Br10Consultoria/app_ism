@@ -120,6 +120,7 @@ def test_api_requires_confirmation_and_correct_invoice(monkeypatch, tmp_path):
     assert r.json()["entrega_confirmada"] is False
     assert "cliente@example.test" not in r.text
     assert r.json()["destinatario_mascarado"].endswith(".test")
+    assert r.json()["destinatario_verificado"] is False
     assert FakeIXC.sent == [444]
 
     # Protege a caixa do cliente contra disparos duplicados.
@@ -128,7 +129,7 @@ def test_api_requires_confirmation_and_correct_invoice(monkeypatch, tmp_path):
     assert FakeIXC.sent == [444]
 
 
-def test_no_email_no_send(monkeypatch, tmp_path):
+def test_api_without_email_field_does_not_block_ixc_native_mail(monkeypatch, tmp_path):
     config(monkeypatch, tmp_path)
     class MissingEmail(FakeIXC):
         async def customer_by_id(self, id_):
@@ -138,6 +139,24 @@ def test_no_email_no_send(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "IXC", MissingEmail)
     r = client.post("/api/v1/faturas/444/enviar-email", headers=headers,
                     json={"session": main.create_session("23"), "confirmar_envio": True})
-    assert r.status_code == 422
-    assert FakeIXC.sent == []
-    assert not (tmp_path / "email.db").exists()
+    assert r.status_code == 200, r.text
+    assert r.json()["solicitacao_aceita"] is True
+    assert r.json()["destinatario_mascarado"] == ""
+    assert r.json()["destinatario_verificado"] is False
+    assert FakeIXC.sent == [444]
+
+
+def test_api_missing_customer_listing_still_uses_validated_invoice(monkeypatch, tmp_path):
+    config(monkeypatch, tmp_path)
+
+    class CustomerListingIncomplete(FakeIXC):
+        async def customer_by_id(self, id_):
+            return None
+
+    FakeIXC.sent = []
+    monkeypatch.setattr(main, "IXC", CustomerListingIncomplete)
+    r = client.post("/api/v1/faturas/444/enviar-email", headers=headers,
+                    json={"session": main.create_session("23"), "confirmar_envio": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["destinatario_mascarado"] == ""
+    assert FakeIXC.sent == [444]
