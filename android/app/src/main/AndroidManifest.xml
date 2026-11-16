@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- GEDI 2.2.6 requer essas permissões para outros módulos do SDK,
+         mas consultar SN e imprimir não requer permissões privilegiadas. -->
+    <uses-permission android:name="android.permission.SET_TIME" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <application
         android:allowBackup="false"
