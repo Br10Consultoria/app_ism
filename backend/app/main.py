@@ -161,7 +161,7 @@ async def validar_terminal():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.11.6", "sessao_segundos": 300}
+    return {"app": "ISM Telecom", "versao": "0.11.7", "sessao_segundos": 300}
 
 
 @app.post("/api/v1/sessao/renovar",
@@ -197,8 +197,12 @@ async def faturas(body: Lookup):
                     "cpf": format_document(body.cpf)
                 },
                 "boleto_email": {
+                    # A listagem de cliente pode omitir o e-mail mesmo quando
+                    # o IXC possui destinatário de cobrança configurado.
+                    # O envio é resolvido pelo próprio endpoint get_boleto/mail.
                     "cadastrado": bool(email),
-                    "disponivel": bool(email),
+                    "disponivel": True,
+                    "destinatario_validado_pela_api": False,
                     "destinatario_mascarado": mask_email(email) if email else ""
                 },
                 "whatsapp": {
@@ -355,20 +359,23 @@ async def enviar_boleto_email(invoice_id: int, body: BoletoEmailRequest):
             raise HTTPException(404, "Cobrança não encontrada para este cliente")
         if invoice.get("status") != "A" or invoice.get("liberado") != "S":
             raise HTTPException(409, "Cobrança não está aberta")
+        # O IXC decide o destinatário de tipo_boleto=mail.
+        # Não recusar a operação porque a API listar cliente omitiria o campo email.
+        # O título e a sessão já foram validados acima; nunca permitir destino
+        # informado pelo Android.
         customer = await ixc.customer_by_id(customer_id)
-        if not customer or str(customer.get("id")) != customer_id:
-            raise HTTPException(404, "Cliente não encontrado no IXC")
-        email = registered_email(customer)
-        if not email:
-            raise HTTPException(422, "Cliente sem e-mail único válido cadastrado no IXC")
+        email = registered_email(customer) if (
+            customer and str(customer.get("id")) == customer_id
+        ) else ""
 
         # Impede que toques duplos ou timeout gerem vários envios iguais.
         reserve_ixc_send(invoice_id)
         result = await ixc.send_boleto_email(invoice_id)
         return {
             **result,
-            "destinatario_mascarado": mask_email(email),
-            "mensagem": "Solicitação aceita pela API do IXC; a entrega não foi confirmada."
+            "destinatario_mascarado": mask_email(email) if email else "",
+            "destinatario_verificado": False,
+            "mensagem": "IXC aceitou o envio para o destinatário configurado no ERP. Confirme entrega no log do IXC."
         }
     except IXCError:
         raise HTTPException(502, "IXC não confirmou a solicitação de e-mail; confira o log antes de tentar novamente")
