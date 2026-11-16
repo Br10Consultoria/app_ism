@@ -49,7 +49,7 @@ final class GertecNativePrinter {
                     "br.com.gertec.gedi.enums.GEDI_PRNTR_e_Alignment");
             Object config = configClass.getDeclaredConstructor().newInstance();
             configClass.getField("alignment").set(
-                    config, Enum.valueOf((Class<? extends Enum>) alignClass, "CENTER"));
+                    config, Enum.valueOf((Class) alignClass, "CENTER"));
             configClass.getField("width").setInt(config, receipt.getWidth());
             configClass.getField("height").setInt(config, receipt.getHeight());
             configClass.getField("offset").setInt(config, 0);
