@@ -442,3 +442,13 @@ O adaptador `GertecNativePrinter` foi corrigido para esse fluxo com reflexão vi
 O APK CI v0.11.8 **não embute AAR GEDI/PPComp**, portanto mostra prévia e diagnóstico no botão Imprimir Código. Essa é uma limitação conhecida; compilar sem erros não significa que a impressora térmica tenha sido validada. O usuário pode testar já o e-mail, logo, botões e layout térmico, e enviar a mensagem mostrada pelo aparelho.
 
 A marca no app é um WebP com fundo externo convertido em transparente em tempo de execução; o PNG original transparente enviado em conversa não foi incorporado ao recurso binário do GitHub, pendente para compilação posterior.
+
+
+## ISM v0.11.9 — serial de fábrica da GPOS780 no início
+
+- Na tela inicial: **Nº de série Gertec** consultado usando `GEDI.getInstance(Context).getINFO().ControlNumberGet(GEDI_INFO_e_ControlNumber.SN)` no SDK. O usuário pode copiar o valor para registrar o funcionário que ficará com o aparelho.
+- Caso o SDK GEDI não esteja no APK ou a consulta seja negada: informa **Nº de série Gertec: indisponível** e, se possível, **ID Android (não é serial)**. Este identificador Android é provisório e não deve ser confundido com o serial da etiqueta.
+- O app não envia esses identificadores a nenhuma API nem ao IXC.
+- O botão **Imprimir código** da v0.11.8 continua preparado para recibo em bobina e chamada GEDI, mas **exige GEDI/PPComp/HCL GPOS780 compatíveis embutidos no APK**. O AAR antigo `gedi_payment-1.14.15.1.aar` do exemplo fornecido corresponde a outra geração e não foi incorporado.
+- Para homologação física, use o pacote Gertec oficial para GPOS780 e instale os AAR/JAR em `android/app/libs/` antes de recompilar. Consulte `android/app/libs/README.md`.
+- Os ajustes de e-mail IXC, PIX, QR compartilhado e logo da v0.11.8 estão preservados nesta branch.
