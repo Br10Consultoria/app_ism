@@ -452,3 +452,42 @@ A marca no app é um WebP com fundo externo convertido em transparente em tempo 
 - O botão **Imprimir código** da v0.11.8 continua preparado para recibo em bobina e chamada GEDI, mas **exige GEDI/PPComp/HCL GPOS780 compatíveis embutidos no APK**. O AAR antigo `gedi_payment-1.14.15.1.aar` do exemplo fornecido corresponde a outra geração e não foi incorporado.
 - Para homologação física, use o pacote Gertec oficial para GPOS780 e instale os AAR/JAR em `android/app/libs/` antes de recompilar. Consulte `android/app/libs/README.md`.
 - Os ajustes de e-mail IXC, PIX, QR compartilhado e logo da v0.11.8 estão preservados nesta branch.
+
+
+## ISM v0.12.0 — impressão e serial nativos com SDK GPOS780 firmware 988B
+
+Bibliotecas analisadas a partir dos arquivos fornecidos pela ISM: `libgedi-2.2.6-b801c08-gpos780Neo-payment-release.aar` (classes e JNI arm64-v8a/armeabi-v7a), GANDI 2.1.19, PPComp 1.39 e HCL 1.0.10. Os métodos foram verificados diretamente por inspeção do `classes.jar` do GEDI 2.2.6:
+
+```java
+GEDI.init(context);
+IGEDI sdk = GEDI.getInstance(context);
+IPRNTR printer = sdk.getPRNTR();
+printer.Init();
+if (printer.Status() == GEDI_PRNTR_e_Status.OK) {
+    GEDI_PRNTR_st_PictureConfig cfg = new GEDI_PRNTR_st_PictureConfig();
+    cfg.alignment = GEDI_PRNTR_e_Alignment.CENTER;
+    cfg.width = 384;
+    cfg.height = recibo.getHeight();
+    printer.DrawPictureExt(cfg, recibo);
+    printer.DrawBlankLine(20);
+    printer.Output();
+}
+String serial = sdk.getINFO().ControlNumberGet(GEDI_INFO_e_ControlNumber.SN);
+```
+
+O app não utiliza mais reflexão nos métodos de impressão/identificação, portanto as interfaces são **validadas durante a compilação** com o SDK 2.2.6. Só considera o comando enviado quando `Output()` retorna sem erro; os testes físicos de leitura do código bancário e de bobina continuam indispensáveis.
+
+### Como gerar o APK completo no GitHub
+
+O pacote de SDK com binários do fabricante **não é fornecido pelo GitHub** e deve ser adicionado pelo responsável do repositório privado. O assistente preparou a partir dos arquivos enviados pela ISM um ZIP de cerca de 4,7 MB chamado `ISM_GPOS780_988B_SDK_PRIVADO.zip`.
+
+1. Acesse a pasta `android/app/sdk/` da branch `feat/ism-v0120-gertec-988b-native-20261116` no GitHub privado.
+2. Use **Add file → Upload files** e envie exatamente `ISM_GPOS780_988B_SDK_PRIVADO.zip` nessa pasta. Faça commit **na branch do PR**, não na main.
+3. O GitHub Actions valida o SHA256 das quatro bibliotecas Gertec e copia para o Android `GEDI 2.2.6`, `PPComp 1.39` e `HCL 1.0.10`, além da logo ISM original em PNG transparente. O AAR GANDI é validado mas não integrado: sua Manifest pede permissões de dispositivo desnecessárias à impressão/serial e a classe GEDI inspecionada não o referencia.
+4. O job Android só compila se o ZIP estiver presente e íntegro, evitando gerar outro APK falso sem suporte à impressora. Baixe `ism-telecom-v0.12.0-gpos780-sdk988b-native-apk` do GitHub Actions.
+5. Instale em um único terminal de **homologação** (APK CI assinado com chave debug) e teste com uma fatura autorizada. Compare código de barras, vencimento, valor e serial de fábrica com a etiqueta. Se não imprimir, encaminhe a mensagem e `adb logcat` filtrado por `br.com.ismtelecom.pos` e `Gertec`, sem dados pessoais.
+6. Backend v0.12.0 não altera o contrato HTTP da versão anterior: PIX, sessão de 300 segundos, envio e-mail nativo IXC e QR compartilhado continuam inalterados.
+
+**Atenção:** o aplicativo não deve requerer `SET_TIME`, `READ_EXTERNAL_STORAGE` ou permissões privilegiadas herdadas do SDK para imprimir/identificar o terminal. Essas permissões são explicitamente removidas na fusão dos manifestos. Toda a execução fica dentro do app Android sem disparar pagamentos pela PPComp.
+
+`docker compose down -v` nunca deve ser usado nesta atualização por causa do banco e do QR compartilhado persistidos.
