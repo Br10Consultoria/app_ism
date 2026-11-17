@@ -1,5 +1,14 @@
 plugins { id 'com.android.application' }
 
+def releaseKeystore = System.getenv('ISM_RELEASE_STORE_FILE')
+def releaseStorePassword = System.getenv('ISM_RELEASE_STORE_PASSWORD')
+def releaseKeyAlias = System.getenv('ISM_RELEASE_KEY_ALIAS')
+def releaseKeyPassword = System.getenv('ISM_RELEASE_KEY_PASSWORD')
+def hasReleaseSigning = [releaseKeystore, releaseStorePassword,
+                         releaseKeyAlias, releaseKeyPassword]
+        .every { it != null && !it.trim().isEmpty() } &&
+        file(releaseKeystore).isFile()
+
 android {
     namespace 'br.com.ismtelecom.pos'
     compileSdk 35
@@ -12,6 +21,35 @@ android {
         versionName '0.12.0'
         def url = (project.findProperty('ismBackendUrl') ?: 'https://app.ismtelecom.com.br').toString()
         buildConfigField 'String', 'API_BASE', '"' + url.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    }
+    signingConfigs {
+        // Chave de desenvolvedor permanente. O robô aplica a assinatura Gertec
+        // na etapa seguinte. Nunca gravar keystore/senha no repositório.
+        release {
+            if (hasReleaseSigning) {
+                storeFile file(releaseKeystore)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+                storeType 'pkcs12'
+                enableV1Signing true
+                enableV2Signing true
+            }
+        }
+    }
+    buildTypes {
+        release {
+            debuggable false
+            minifyEnabled false
+            // Sem secrets: assembleRelease gera app-release-unsigned.apk.
+            // Com secrets (workflow_dispatch): APK release assinado.
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
+        }
+        debug {
+            debuggable true
+        }
     }
     buildFeatures { buildConfig true }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
