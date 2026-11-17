@@ -84,6 +84,8 @@ public class MainActivity extends Activity {
     private static final int RED = Color.rgb(202, 66, 103);
     private static final long SESSION_MILLIS = 300_000L; // Mesmo TTL do backend: 5 minutos.
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    // O cadastro de terminal nunca deve bloquear a fila de consultas de CPF/PIX.
+    private final ExecutorService registryExecutor = Executors.newSingleThreadExecutor();
     private final Handler ui = new Handler(Looper.getMainLooper());
     private LinearLayout content;
     private TextView sessionFooter;
@@ -224,10 +226,10 @@ public class MainActivity extends Activity {
             goBack.setOnClickListener(v -> backToInvoicesOrHome());
             header.addView(goBack, new LinearLayout.LayoutParams(dp(79), dp(58)));
         }
-        // Na tela inicial a marca ocupa toda a largura disponível.
-        View brand = logo(back ? 72 : 176);
+        // A logo da HOME fica menor; outras telas mantêm 72dp.
+        View brand = logo(back ? 72 : 112);
         LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(
-                0, dp(back ? 72 : 176), 1);
+                0, dp(back ? 72 : 112), 1);
         header.addView(brand, logoParams);
         if (back) {
             TextView home = label("⌂ Início", 13, NAVY, true);
@@ -415,6 +417,13 @@ public class MainActivity extends Activity {
 
     private void activateFromQr(String code) {
         if (loading || terminalConfigured()) return;
+        final String installation;
+        try {
+            installation = TerminalRegistryStore.installationId(this);
+        } catch (IOException error) {
+            dialog("Não foi possível gerar a identificação deste terminal.");
+            return;
+        }
         loading = true;
         final int epoch = requestEpoch;
         ProgressBar progress = new ProgressBar(this);
@@ -422,6 +431,7 @@ public class MainActivity extends Activity {
         executor.execute(() -> {
             HttpURLConnection conn = null;
             String key = "";
+            String terminalNumber = "";
             String error = "Não foi possível ativar. Verifique a conexão da maquineta.";
             try {
                 conn = (HttpURLConnection) new URL(
@@ -437,6 +447,7 @@ public class MainActivity extends Activity {
                 conn.setRequestProperty("Cache-Control", "no-store");
                 JSONObject data = new JSONObject();
                 data.put("codigo", code);
+                data.put("installation_uuid", installation);
                 try (OutputStream out = conn.getOutputStream()) {
                     out.write(data.toString().getBytes(StandardCharsets.UTF_8));
                 }
@@ -457,6 +468,11 @@ public class MainActivity extends Activity {
                         String secret = json.optString("terminal_key", "");
                         if (secret.length() >= 32 && secret.length() <= 512) {
                             key = secret;
+                            terminalNumber = json.optString("terminal_id", "");
+                            if (!terminalNumber.matches("ISM-[0-9]{4,12}")) {
+                                key = "";
+                                error = "Atualize o backend ISM para v0.12.1 antes de ativar.";
+                            }
                         }
                     }
                 } else if (status == 401 || status == 422) {
@@ -472,6 +488,7 @@ public class MainActivity extends Activity {
                 if (conn != null) conn.disconnect();
             }
             final String receivedKey = key;
+            final String assignedNumber = terminalNumber;
             final String failure = error;
             ui.post(() -> {
                 if (epoch != requestEpoch) return;
@@ -482,6 +499,7 @@ public class MainActivity extends Activity {
                     return;
                 }
                 try {
+                    TerminalRegistryStore.saveNumberOnce(this, assignedNumber);
                     TerminalKeyStore.save(this, receivedKey);
                     if (!terminalConfigured())
                         throw new IOException("Não foi possível conferir chave protegida");
@@ -653,47 +671,93 @@ public class MainActivity extends Activity {
         LinearLayout deviceInfo = col();
         deviceInfo.setPadding(dp(12), dp(10), dp(12), dp(10));
         deviceInfo.setBackground(shape(Color.WHITE, 10, Color.rgb(218, 231, 239)));
-        TextView serialText = label("Nº de série Gertec: consultando...", 13, NAVY, true);
-        deviceInfo.addView(serialText, margins(-1, -2, 5));
-        TextView auxiliary = label("", 11, MUTED, false);
-        deviceInfo.addView(auxiliary, margins(-1, -2, 2));
+        String savedNumber = TerminalRegistryStore.assignedNumber(this);
+        TextView registryNumber = label(savedNumber.isEmpty()
+                ? "Terminal ISM: cadastro pendente"
+                : "Terminal ISM: " + savedNumber, 13, NAVY, true);
+        deviceInfo.addView(registryNumber, margins(-1, -2, 8));
+
         Button copyIdentity = button("Copiar identificação do terminal", NAVY, false);
         copyIdentity.setTextSize(11);
-        copyIdentity.setEnabled(false);
+        copyIdentity.setEnabled(!savedNumber.isEmpty());
+        copyIdentity.setOnClickListener(v -> {
+            String assigned = TerminalRegistryStore.assignedNumber(this);
+            if (assigned.isEmpty()) return;
+            ClipboardManager clipboard = (ClipboardManager)
+                    getSystemService(Context.CLIPBOARD_SERVICE);
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(
+                        ClipData.newPlainText("Identificação ISM", assigned));
+                Toast.makeText(this, "Número do terminal copiado",
+                        Toast.LENGTH_SHORT).show();
+            }
+        });
         deviceInfo.addView(copyIdentity, margins(-1, dp(43), 0));
         content.addView(deviceInfo, margins(-1, -2, 12));
 
-        final int homeEpoch = requestEpoch;
-        executor.execute(() -> {
-            GertecDeviceIdentity.Identity device = GertecDeviceIdentity.read(
-                    getApplicationContext());
-            ui.post(() -> {
-                if (homeEpoch != requestEpoch || !"home".equals(screenType)) return;
-                if (!device.serial.isEmpty()) {
-                    serialText.setText("Nº de série Gertec: " + device.serial);
-                    auxiliary.setText("Identificação física da maquineta (GEDI)");
-                } else {
-                    serialText.setText("Nº de série Gertec: indisponível");
-                    auxiliary.setText(device.androidId.isEmpty()
-                            ? "Diagnóstico: " + device.diagnostic
-                            : "ID Android (não é serial): " + device.androidId
-                                    + "\\n" + device.diagnostic);
+        if (savedNumber.isEmpty()) {
+            // Migração automática dos dispositivos ativados com o QR antigo:
+            // não exige apagar a chave nem escanear outra vez o QR compartilhado.
+            loadRegisteredTerminalNumber(registryNumber, copyIdentity);
+        }
+    }
+
+    private void loadRegisteredTerminalNumber(TextView display, Button copyButton) {
+        final int epoch = requestEpoch;
+        final String secret = terminalKey();
+        if (secret.length() < 32) return;
+        registryExecutor.execute(() -> {
+            HttpURLConnection connection = null;
+            String number = "";
+            try {
+                String installation = TerminalRegistryStore.installationId(
+                        getApplicationContext());
+                connection = (HttpURLConnection) new URL(
+                        apiBase().replaceAll("/+$", "")
+                        + "/api/v1/terminal/identificar").openConnection();
+                connection.setRequestMethod("POST");
+                connection.setConnectTimeout(5000);
+                connection.setReadTimeout(8000);
+                connection.setDoOutput(true);
+                connection.setUseCaches(false);
+                connection.setRequestProperty("Content-Type", "application/json");
+                connection.setRequestProperty("X-Terminal-Key", secret);
+                JSONObject data = new JSONObject();
+                data.put("installation_uuid", installation);
+                try (OutputStream out = connection.getOutputStream()) {
+                    out.write(data.toString().getBytes(StandardCharsets.UTF_8));
                 }
-                String valueToCopy = !device.serial.isEmpty()
-                        ? "Serial Gertec: " + device.serial
-                        : (device.androidId.isEmpty() ? ""
-                           : "ID Android (não é serial): " + device.androidId);
-                copyIdentity.setEnabled(!valueToCopy.isEmpty());
-                copyIdentity.setOnClickListener(v -> {
-                    ClipboardManager clipboard = (ClipboardManager)
-                            getSystemService(Context.CLIPBOARD_SERVICE);
-                    if (clipboard != null) {
-                        clipboard.setPrimaryClip(
-                                ClipData.newPlainText("Identificação ISM", valueToCopy));
-                        Toast.makeText(this, "Identificação copiada",
-                                Toast.LENGTH_SHORT).show();
+                if (connection.getResponseCode() == 200) {
+                    try (InputStream input = connection.getInputStream()) {
+                        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                        byte[] buffer = new byte[1024];
+                        int n;
+                        while ((n = input.read(buffer)) != -1) {
+                            bytes.write(buffer, 0, n);
+                            if (bytes.size() > 4096) throw new IOException(
+                                    "Cadastro de terminal excedeu tamanho");
+                        }
+                        number = new JSONObject(bytes.toString("UTF-8"))
+                                .optString("terminal_id", "");
                     }
-                });
+                    TerminalRegistryStore.saveNumberOnce(
+                            getApplicationContext(), number);
+                }
+            } catch (Exception ignored) {
+                // Sem rede, mantém número já salvo ou mostra cadastro pendente.
+                // Não interromper a consulta de CPF nem o atendimento.
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+            String numberSaved = TerminalRegistryStore.assignedNumber(this);
+            ui.post(() -> {
+                if (epoch != requestEpoch || !"home".equals(screenType)) return;
+                if (!numberSaved.isEmpty()) {
+                    display.setText("Terminal ISM: " + numberSaved);
+                    copyButton.setEnabled(true);
+                } else {
+                    display.setText("Terminal ISM: cadastro pendente");
+                }
             });
         });
     }
@@ -1778,6 +1842,7 @@ public class MainActivity extends Activity {
         resetSession();
         closePdf();
         executor.shutdownNow();
+        registryExecutor.shutdownNow();
         super.onDestroy();
     }
 }

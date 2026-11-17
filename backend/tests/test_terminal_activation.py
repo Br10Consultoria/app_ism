@@ -4,7 +4,7 @@ import sqlite3
 
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import app, attempts, rate_lock
 from app import terminal_activation as activation
 
 TEST_KEY = "terminal-chave-exemplo-1234567890-123456789012345"
@@ -14,6 +14,9 @@ client = TestClient(app)
 def configure(monkeypatch, tmp_path):
     monkeypatch.setenv("TERMINAL_KEY", TEST_KEY)
     monkeypatch.setenv("TERMINAL_ACTIVATION_DB", str(tmp_path / "activation.db"))
+    # O rate limit é global no TestClient; cada teste simula uma janela nova.
+    with rate_lock:
+        attempts.clear()
 
 
 def test_server_generates_single_use_qr_and_never_places_key_inside(monkeypatch, tmp_path):
@@ -144,3 +147,79 @@ def test_shared_qr_rejects_disabled_terminal_key(monkeypatch, tmp_path):
     denied = client.post("/api/v1/terminal/ativar-qr", json={"codigo": code})
     assert denied.status_code == 503
     assert "terminal_key" not in denied.text
+
+
+def test_unique_sequential_terminal_numbers_after_shared_qr_scan(monkeypatch, tmp_path):
+    import uuid
+    configure(monkeypatch, tmp_path)
+    qr = activation.issue_shared()[len(activation.PREFIX):]
+    # O QR compartilhado segue igual, mas cada instalação recebe seu número.
+    device_a = str(uuid.uuid4())
+    device_b = str(uuid.uuid4())
+    a = client.post("/api/v1/terminal/ativar-qr", json={
+        "codigo": qr, "installation_uuid": device_a})
+    b = client.post("/api/v1/terminal/ativar-qr", json={
+        "codigo": qr, "installation_uuid": device_b})
+    assert a.status_code == 200, a.text
+    assert b.status_code == 200, b.text
+    assert a.json()["terminal_id"] == "ISM-0001"
+    assert b.json()["terminal_id"] == "ISM-0002"
+    assert a.json()["terminal_key"] == b.json()["terminal_key"] == TEST_KEY
+    # Reescanear no mesmo dispositivo não altera ID nem consome outro número.
+    again = client.post("/api/v1/terminal/ativar-qr", json={
+        "codigo": qr, "installation_uuid": device_a})
+    assert again.status_code == 200
+    assert again.json()["terminal_id"] == "ISM-0001"
+    with sqlite3.connect(activation.db_path()) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM terminal_registry").fetchone()[0] == 2
+    assert activation.shared_status()["ativo"] is True
+
+
+def test_migration_of_old_activated_devices_without_replacing_qr(monkeypatch, tmp_path):
+    import uuid
+    configure(monkeypatch, tmp_path)
+    activation.issue_shared()
+    id_a = str(uuid.uuid4())
+    no_key = client.post("/api/v1/terminal/identificar",
+                         json={"installation_uuid": id_a})
+    assert no_key.status_code == 401
+    headers = {"X-Terminal-Key": TEST_KEY}
+    first = client.post("/api/v1/terminal/identificar",
+                        headers=headers, json={"installation_uuid": id_a})
+    second = client.post("/api/v1/terminal/identificar",
+                         headers=headers, json={"installation_uuid": id_a})
+    assert first.status_code == second.status_code == 200
+    assert first.json()["terminal_id"] == second.json()["terminal_id"] == "ISM-0001"
+    assert activation.shared_status()["ativo"] is True
+
+
+def test_invalid_installation_id_cannot_register(monkeypatch, tmp_path):
+    configure(monkeypatch, tmp_path)
+    code = activation.issue_shared()[len(activation.PREFIX):]
+    attempt = client.post("/api/v1/terminal/ativar-qr", json={
+        "codigo": code, "installation_uuid": "device-test"})
+    assert attempt.status_code == 422
+    attempt = client.post("/api/v1/terminal/identificar",
+                          headers={"X-Terminal-Key": TEST_KEY},
+                          json={"installation_uuid": "device-test"})
+    assert attempt.status_code == 422
+    with sqlite3.connect(activation.db_path()) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM terminal_registry").fetchone()[0] == 0
+
+
+def test_one_time_qr_number_registry_transaction_and_legacy_compat(monkeypatch, tmp_path):
+    import uuid
+    configure(monkeypatch, tmp_path)
+    code = activation.issue()[0][len(activation.PREFIX):]
+    device = str(uuid.uuid4())
+    one = client.post("/api/v1/terminal/ativar-qr", json={
+        "codigo": code, "installation_uuid": device})
+    assert one.status_code == 200
+    assert one.json()["terminal_id"] == "ISM-0001"
+    assert client.post("/api/v1/terminal/ativar-qr", json={
+        "codigo": code, "installation_uuid": device}).status_code == 401
+    # Contrato de dispositivos antigos não exige installation_uuid.
+    shared = activation.issue_shared()[len(activation.PREFIX):]
+    legacy = client.post("/api/v1/terminal/ativar-qr", json={"codigo": shared})
+    assert legacy.status_code == 200
+    assert legacy.json() == {"autorizado": True, "terminal_key": TEST_KEY}

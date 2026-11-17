@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from .ixc import IXC, IXCError, digits, valid_cpf, valid_document, format_document, pick
 from .pix_confirmation import verify_pix_receipt
-from .terminal_activation import redeem, ActivationError
+from .terminal_activation import redeem, redeem_and_register, register_device, ActivationError
 from .boleto_email import registered_email, mask_email, reserve_ixc_send, BoletoEmailError
 from .commercial_leads import save_interest, claim_for_send, set_status
 from . import whatsapp_opa
@@ -39,6 +39,20 @@ attempts = defaultdict(deque)
 
 class QRActivationRequest(BaseModel):
     codigo: str = Field(min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]{43}$")
+    # Compatibilidade com versões anteriores do app: clientes v0.12.0 não
+    # enviam UUID e continuam podendo ativar, sem número sequencial.
+    installation_uuid: str | None = Field(
+        default=None,
+        min_length=36, max_length=36,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    )
+
+
+class DeviceRegistryRequest(BaseModel):
+    installation_uuid: str = Field(
+        min_length=36, max_length=36,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    )
 
 
 class Lookup(BaseModel):
@@ -142,12 +156,38 @@ async def ativar_qr(body: QRActivationRequest):
     if not 32 <= len(key) <= 512:
         raise HTTPException(503, "Ativação ainda não configurada no servidor")
     try:
-        if not redeem(body.codigo):
-            raise HTTPException(401, "QR inválido, expirado ou já utilizado. Solicite outro.")
+        if body.installation_uuid:
+            # O mesmo QR compartilhado não contém um número fixo: o backend
+            # concede um ID distinto para cada instalação autenticada.
+            number = redeem_and_register(body.codigo, body.installation_uuid)
+            if number is None:
+                raise HTTPException(401, "QR inválido, expirado ou já utilizado. Solicite outro.")
+        else:
+            # Compatibilidade com APKs antigos que não conhecem terminal_id.
+            if not redeem(body.codigo):
+                raise HTTPException(401, "QR inválido, expirado ou já utilizado. Solicite outro.")
+            number = None
     except (ActivationError, OSError, sqlite3.Error):
         raise HTTPException(503, "Serviço de ativação indisponível")
+    payload = {"autorizado": True, "terminal_key": key}
+    if number:
+        payload["terminal_id"] = number
     return JSONResponse(
-        {"autorizado": True, "terminal_key": key},
+        payload,
+        headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
+    )
+
+
+@app.post("/api/v1/terminal/identificar",
+          dependencies=[Depends(require_terminal), Depends(throttle)])
+async def identificar_terminal(body: DeviceRegistryRequest):
+    """Migração de dispositivos já ativados, sem reemitir ou escanear QR."""
+    try:
+        number = register_device(body.installation_uuid)
+    except (ActivationError, OSError, sqlite3.Error):
+        raise HTTPException(503, "Cadastro de terminais indisponível")
+    return JSONResponse(
+        {"autorizado": True, "terminal_id": number},
         headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
     )
 
@@ -162,7 +202,7 @@ async def validar_terminal():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.12.0", "sessao_segundos": 300}
+    return {"app": "ISM Telecom", "versao": "0.12.1", "sessao_segundos": 300}
 
 
 @app.post("/api/v1/sessao/renovar",
