@@ -4,7 +4,7 @@ import sqlite3
 
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import app, attempts, rate_lock
 from app import terminal_activation as activation
 
 TEST_KEY = "terminal-chave-exemplo-1234567890-123456789012345"
@@ -14,6 +14,9 @@ client = TestClient(app)
 def configure(monkeypatch, tmp_path):
     monkeypatch.setenv("TERMINAL_KEY", TEST_KEY)
     monkeypatch.setenv("TERMINAL_ACTIVATION_DB", str(tmp_path / "activation.db"))
+    # O rate limit é global no TestClient; cada teste simula uma janela nova.
+    with rate_lock:
+        attempts.clear()
 
 
 def test_server_generates_single_use_qr_and_never_places_key_inside(monkeypatch, tmp_path):
