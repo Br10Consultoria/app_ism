@@ -1034,8 +1034,19 @@ public class MainActivity extends Activity {
         Button pdf = button("▤  Visualizar boleto PDF", NAVY, false);
         pdf.setOnClickListener(v -> requestPayment(id, "boleto"));
         content.addView(pdf, margins(-1, dp(75), 15));
-        content.addView(label("Cartão de crédito e débito permanece em homologação " +
-                "e não está habilitado nesta versão.", 12, MUTED, false));
+        // Exibir as modalidades para orientar o cliente, sem iniciar transação
+        // nem chamar TEF/PPComp até homologação com o adquirente.
+        TextView unavailable = label("Pagamento com cartão — ainda indisponível",
+                13, MUTED, true);
+        content.addView(unavailable, margins(-1, -2, 10));
+        Button credit = button("Cartão de crédito (em breve)", NAVY, false);
+        credit.setEnabled(false);
+        credit.setContentDescription("Cartão de crédito: indisponível");
+        content.addView(credit, margins(-1, dp(65), 10));
+        Button debit = button("Cartão de débito (em breve)", NAVY, false);
+        debit.setEnabled(false);
+        debit.setContentDescription("Cartão de débito: indisponível");
+        content.addView(debit, margins(-1, dp(65), 15));
     }
 
     /** IXC envia pelo próprio e-mail cadastrado; não precisa de SMTP nem WhatsApp no POS. */
@@ -1055,14 +1066,9 @@ public class MainActivity extends Activity {
             dialog("O servidor ISM ainda não disponibiliza o envio pelo IXC. Atualize o backend.");
             return;
         }
-        final String masked = emailInfo.optString("destinatario_mascarado", "");
         new AlertDialog.Builder(this)
-                .setTitle("Enviar boleto por e-mail")
-                .setMessage("Enviar a fatura " + id + " para o e-mail cadastrado no IXC"
-                        + (masked.isEmpty()
-                            ? ". O destinatário não foi informado pela API de cadastro."
-                            : " (cadastro indica " + masked + ").")
-                        + "\\nO IXC escolherá o destinatário. Confirme no cadastro antes de enviar.")
+                .setTitle("Enviar boleto")
+                .setMessage("Enviar a fatura " + id + " para o e-mail cadastrado no IXC?")
                 .setNegativeButton("Cancelar", null)
                 .setPositiveButton("Confirmar envio", (d, which) -> {
                     if (!isSessionValid()) {
@@ -1080,9 +1086,8 @@ public class MainActivity extends Activity {
                     }
                     call("/api/v1/faturas/" + id + "/enviar-email", request, result -> {
                         if (result.optBoolean("solicitacao_aceita", false)) {
-                            dialog("O IXC aceitou a solicitação de e-mail da fatura " + id
-                                    + ". Verifique a fila/log de e-mails do IXC e o recebimento. "
-                                    + "A API não comprova a entrega.");
+                            // A API confirma o aceite do pedido, não a entrega.
+                            dialog("Boleto encaminhado para envio.");
                         } else {
                             dialog("O IXC não confirmou o pedido de envio.");
                         }
