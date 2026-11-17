@@ -1,4 +1,4 @@
-name: Validar backend e gerar APK de testes
+name: Validar backend e gerar APK Release Gertec
 
 on:
   push:
@@ -20,8 +20,8 @@ jobs:
   android:
     runs-on: ubuntu-latest
     env:
-      # URL fixa do backend. A chave nunca e embutida no APK.
-      ORG_GRADLE_PROJECT_ismBackendUrl: ${{ github.event_name == 'workflow_dispatch' && 'https://app.ismtelecom.com.br' || '' }}
+      # O backend publico e fixo; a TERMINAL_KEY so e cadastrada no equipamento.
+      ORG_GRADLE_PROJECT_ismBackendUrl: https://app.ismtelecom.com.br
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -36,11 +36,71 @@ jobs:
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
           test -n "$SDKMANAGER"
           "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
-      - name: Ativar AndroidX no CI (sem gravar segredos)
+      - name: Carregar SDK Gertec GPOS780 988B e logo ISM (checksums validados)
+        run: python3 scripts/install_gertec_sdk.py
+      - name: Ativar AndroidX no CI
         run: echo "android.useAndroidX=true" >> android/gradle.properties
-      - run: gradle -p android :app:assembleDebug --no-daemon
-      - uses: actions/upload-artifact@v4
+      - name: Preparar chave privada Release (somente execucao manual)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          ISM_KEYSTORE_BASE64: ${{ secrets.ISM_RELEASE_KEYSTORE_B64 }}
+          ISM_STORE_PASSWORD: ${{ secrets.ISM_RELEASE_STORE_PASSWORD }}
+          ISM_KEY_ALIAS: ${{ secrets.ISM_RELEASE_KEY_ALIAS }}
+          ISM_KEY_PASSWORD: ${{ secrets.ISM_RELEASE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$ISM_KEYSTORE_BASE64" ]]; then
+            echo "Chave Release ainda nao cadastrada. A build sera Release sem assinatura de desenvolvedor."
+            exit 0
+          fi
+          if [[ -z "$ISM_STORE_PASSWORD" || -z "$ISM_KEY_ALIAS" || -z "$ISM_KEY_PASSWORD" ]]; then
+            echo "::error::Configuracao de assinatura incompleta: faltam segredos ISM_RELEASE_*."
+            exit 1
+          fi
+          printf '%s' "$ISM_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/ism-release.p12"
+          chmod 600 "$RUNNER_TEMP/ism-release.p12"
+          echo "Chave Release carregada em diretorio temporario; assinatura habilitada."
+      - name: Compilar APK Release (android:debuggable=false)
+        env:
+          ISM_RELEASE_STORE_FILE: ${{ runner.temp }}/ism-release.p12
+          ISM_RELEASE_STORE_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && secrets.ISM_RELEASE_STORE_PASSWORD || '' }}
+          ISM_RELEASE_KEY_ALIAS: ${{ github.event_name == 'workflow_dispatch' && secrets.ISM_RELEASE_KEY_ALIAS || '' }}
+          ISM_RELEASE_KEY_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && secrets.ISM_RELEASE_KEY_PASSWORD || '' }}
+        run: gradle -p android :app:assembleRelease --no-daemon
+      - name: Validar modo Release, pacote e assinatura
+        id: release_apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="android/app/build/outputs/apk/release"
+          if [[ -f "$OUT/app-release.apk" ]]; then
+            APK="$OUT/app-release.apk"
+            ARTIFACT="ism-telecom-v0.12.0-gpos780-988b-release-assinado"
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
+            echo "APK Release com assinatura Android verificada."
+          elif [[ -f "$OUT/app-release-unsigned.apk" ]]; then
+            APK="$OUT/app-release-unsigned.apk"
+            ARTIFACT="ism-telecom-v0.12.0-gpos780-988b-release-NAO-ASSINADO"
+            echo "::notice::APK Release sem assinatura Android. Nao instalar diretamente; confirmar com Gertec se o robo aceita APK unsigned."
+          else
+            echo "::error::Nenhum APK Release gerado."
+            exit 1
+          fi
+          BADGING="$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK")"
+          echo "$BADGING" | grep -q "name='br.com.ismtelecom.pos'"
+          echo "$BADGING" | grep -q "versionCode='22'"
+          if echo "$BADGING" | grep -q '^application-debuggable'; then
+            echo "::error::O APK esta em modo debug e sera rejeitado pela Gertec."
+            exit 1
+          fi
+          echo "Release verificado: android:debuggable nao ativo, pacote ISM, versionCode 22."
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
+      - name: Disponibilizar APK Release com estado de assinatura explicito
+        uses: actions/upload-artifact@v4
         with:
-          name: ism-telecom-v0.9-ativacao-unica-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: ${{ steps.release_apk.outputs.artifact_name }}
+          path: ${{ steps.release_apk.outputs.path }}
+          if-no-files-found: error
           retention-days: 14

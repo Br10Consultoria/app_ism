@@ -226,6 +226,29 @@ class IXC:
                 return row
         return None
 
+    async def send_boleto_email(self, invoice_id):
+        """Solicita ao IXC envio pelo e-mail configurado no ERP (sem SMTP no ISM).
+
+        sucesso=true indica aceitação pela API, não entrega pelo servidor de e-mail.
+        """
+        ident = str(invoice_id)
+        if not re.fullmatch(r"[1-9][0-9]{0,14}", ident):
+            raise IXCError("Identificador de cobrança inválido")
+        result = await self.request("get_boleto", {
+            "boletos": ident,
+            "juro": "N",
+            "multa": "N",
+            "atualiza_boleto": "N",
+            "tipo_boleto": "mail",
+        }, method="GET", include_ixcsoft=True)
+        registros = result.get("registros") if isinstance(result, dict) else None
+        if not isinstance(registros, list) or not any(
+            isinstance(item, dict) and item.get("sucesso") is True
+            for item in registros
+        ):
+            raise IXCError("IXC não confirmou a solicitação de envio do boleto")
+        return {"solicitacao_aceita": True, "entrega_confirmada": False}
+
     async def payment(self, invoice, kind):
         if kind == "pix":
             # IXC get_pix: id_areceber é o campo utilizado em instalações conhecidas.

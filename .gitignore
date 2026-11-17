@@ -11,3 +11,11 @@ android/gradle.properties
 *.keystore
 *.jks
 .idea/
+
+# Materiais sensiveis para assinatura Android. Nunca enviar ao GitHub.
+*.p12
+*.pfx
+*.pem
+*.key
+*.b64
+android/app/signing/

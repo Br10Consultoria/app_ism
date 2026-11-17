@@ -32,3 +32,15 @@ A impressora térmica interna da GPOS780 exige SDK e credenciamento Gertec, não
 4. Instale somente em equipamento autorizado; configure o servidor com HTTPS válido.
 
 **Status:** Android compilado e testes unitários do backend aprovados no GitHub Actions. Consulte **Actions → Validar backend e gerar APK de testes → Artifacts → ism-telecom-debug-apk**. O APK gerado pelo CI usa configuração vazia de servidor/chave e serve para validar instalação/interface; para conexão real, gere uma build própria com `android/gradle.properties` configurado. Conexão IXC, disponibilidade dos dados de cobrança, envio comercial e hardware Gertec ainda exigem homologação na instalação.
+
+
+### Novidade da v0.11.4
+Baseada na UI completa da v0.11.3 (primeira logo do PDF, botões atuais, PIX e sessão 300s). O botão **Enviar boleto** utiliza a API de e-mail do próprio IXC, sem configurar um novo servidor SMTP na aplicação ISM. O IXC aceita a solicitação, mas a entrega deve ser confirmada pelo log de e-mails do IXC.
+
+
+### Ativação com QR Code (v0.11.5)
+Para cada nova maquineta, o administrador gera um QR de cinco minutos e **uso único** no próprio backend: `docker exec -it backend-api-1 python -m app.terminal_activation --minutes 5`. O app usa câmera integrada, valida convite no backend HTTPS e salva a chave cifrada (sem expor a TERMINAL_KEY no QR). Sem câmera/MDM, existe a opção manual. Atualize o backend antes do APK.
+
+
+### v0.11.6 — UM QR compartilhado para ativar todas as maquinetas
+Novo padrão: `docker exec -it backend-api-1 python -m app.terminal_activation --shared`. Esse comando cria um QR reutilizável para todas as maquinetas, sem expiração automática; **executá-lo novamente revoga o QR anterior**. Guarde e reenvie a mesma imagem. Estado: `--status`; revogação: `--revoke-shared`. Disponível também modo de uso único `--one-time --minutes 5`. As máquinas já ativadas permanecem ativadas após a revogação do QR. **Compartilhe o QR apenas com pessoas autorizadas.**
