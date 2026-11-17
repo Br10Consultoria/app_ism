@@ -51,6 +51,12 @@ def _connection():
             code_sha256 TEXT NOT NULL,
             created_at INTEGER NOT NULL
         )""")
+        # Persistente no mesmo volume /data: não alteramos o QR compartilhado.
+        conn.execute("""CREATE TABLE IF NOT EXISTS terminal_registry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            installation_uuid TEXT UNIQUE NOT NULL,
+            created_at INTEGER NOT NULL
+        )""")
         conn.commit()
         return conn
     except Exception:
@@ -129,6 +135,72 @@ def revoke_shared():
             conn.execute("BEGIN IMMEDIATE")
             cur = conn.execute("DELETE FROM terminal_shared_activation WHERE id=1")
             return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+INSTALLATION_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+
+
+def _allocate_number(conn, installation_uuid: str) -> str:
+    if not isinstance(installation_uuid, str) or not INSTALLATION_RE.fullmatch(installation_uuid):
+        raise ActivationError("Identificador da instalação inválido")
+    row = conn.execute(
+        "SELECT id FROM terminal_registry WHERE installation_uuid=?", (installation_uuid,)
+    ).fetchone()
+    if row is None:
+        conn.execute(
+            "INSERT INTO terminal_registry (installation_uuid,created_at) VALUES (?,?)",
+            (installation_uuid, int(time.time())),
+        )
+        row = conn.execute(
+            "SELECT id FROM terminal_registry WHERE installation_uuid=?", (installation_uuid,)
+        ).fetchone()
+    return f"ISM-{int(row[0]):04d}"
+
+
+def register_device(installation_uuid: str) -> str:
+    """Atribui ou recupera o mesmo número para instalação já autenticada.
+
+    Usado na migração de maquinetas ativadas em versões anteriores. O endpoint
+    HTTP que invoca esta função exige X-Terminal-Key.
+    """
+    conn = _connection()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            return _allocate_number(conn, installation_uuid)
+    finally:
+        conn.close()
+
+
+def redeem_and_register(code: str, installation_uuid: str):
+    """Resgata QR e grava ID no MESMO commit. Repetir QR compartilhado é idempotente."""
+    if not isinstance(code, str) or not TOKEN_RE.fullmatch(code):
+        return None
+    if not isinstance(installation_uuid, str) or not INSTALLATION_RE.fullmatch(installation_uuid):
+        raise ActivationError("Identificador da instalação inválido")
+    now = int(time.time())
+    conn = _connection()
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                "UPDATE terminal_activation SET used_at=? "
+                "WHERE code_sha256=? AND used_at IS NULL AND expires_at>=?",
+                (now, _digest(code), now),
+            )
+            if cursor.rowcount != 1:
+                shared = conn.execute(
+                    "SELECT 1 FROM terminal_shared_activation "
+                    "WHERE id=1 AND code_sha256=?",
+                    (_digest(code),),
+                ).fetchone()
+                if shared is None:
+                    return None
+            return _allocate_number(conn, installation_uuid)
     finally:
         conn.close()
 
