@@ -54,7 +54,7 @@ Se a branch já existir, use `git switch <branch>` seguido de `git pull --ff-onl
 No Ubuntu:
 
 ```bash
-docker exec backend-api-1 python - <<'PY'
+docker exec -i backend-api-1 python - <<'PY'
 import os, sqlite3
 db=os.getenv('LEADS_DB','/data/leads.db')
 with sqlite3.connect(db) as conn:
