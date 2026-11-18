@@ -58,7 +58,7 @@ def test_prospect_opa_sends_only_after_opt_in(monkeypatch, tmp_path):
     assert "71988887777" not in response.text
     assert sent == [
         ("prospecto", "5571988887777",
-         ["Interessado", "ISM TELECOM"], {"open_customer_service": True})
+         ["Interessado", "ISM TELECOM"], {})
     ]
     registered = list_leads("encaminhado")
     assert len(registered) == 1
