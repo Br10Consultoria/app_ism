@@ -215,7 +215,7 @@ async def validar_terminal():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.12.5", "sessao_segundos": 300}
+    return {"app": "ISM Telecom", "versao": "0.12.6", "sessao_segundos": 300}
 
 
 @app.post("/api/v1/sessao/renovar",
@@ -536,102 +536,36 @@ def prospect_whatsapp_configured():
 
 
 def commercial_configured(data=None):
-    """Preferir WhatsApp do interessado, quando opt-in da empresa e número válidos."""
-    if prospect_whatsapp_configured() and data is not None:
-        number = digits(data.get("telefone", ""))
-        if len(number) == 11 and number[2] == "9":
-            return True
-    opa_ready = (
-        os.getenv("WHATSAPP_PROVIDER", "").lower() == "opa"
-        and os.getenv("OPA_BASE_URL", "")
-        and os.getenv("OPA_API_TOKEN", "")
-        and os.getenv("OPA_CHANNEL_ID", "")
-        and os.getenv("OPA_TEMPLATE_LEAD_ID", "")
-        and os.getenv("OPA_COMMERCIAL_PHONE", "")
-    )
-    return bool(
-        opa_ready
-        or os.getenv("COMMERCIAL_WEBHOOK_URL", "")
-        or (os.getenv("SMTP_HOST", "") and os.getenv("COMMERCIAL_TO", ""))
-    )
+    """Quero contratar: envio SOMENTE ao interessado, nunca ao número interno."""
+    if not prospect_whatsapp_configured() or data is None:
+        return False
+    phone = digits(data.get("telefone", ""))
+    return len(phone) == 11 and phone[2] == "9"
 
 
 async def send_commercial(data):
-    """Conversa com interessado via Opa ou aviso interno via canais comerciais."""
-    number = digits(data["telefone"])
-    if (os.getenv("WHATSAPP_PROVIDER", "").lower() == "opa"
-            and os.getenv("OPA_TEMPLATE_LEAD_ID", "")
-            and os.getenv("OPA_COMMERCIAL_PHONE", "")):
-        # Telefone do departamento comercial cadastrado pelo administrador.
-        destination = digits(os.environ["OPA_COMMERCIAL_PHONE"])
-        if len(destination) == 11 and destination[2] == "9":
-            destination = "55" + destination
-        if len(destination) != 13 or not destination.startswith("55") or destination[4] != "9":
-            raise ValueError("OPA_COMMERCIAL_PHONE inválido")
-        # O template já aprovado possui 4 variáveis. Preservar a quantidade e
-        # incluir CPF junto à identificação do técnico, destinados SOMENTE ao
-        # telefone interno do comercial; nunca incluir CPF no template ao cliente.
-        technician_and_cpf = (data["tecnico"] + " | CPF: " + data["cpf"])
-        message_id = await whatsapp_opa.send_template("interessados", destination, [
-            data["nome"], data["telefone"], technician_and_cpf, data["protocolo"]
-        ])
-        return "opa", message_id
+    """Convida o próprio interessado a procurar o comercial por iniciativa dele.
 
-    url = os.getenv("COMMERCIAL_WEBHOOK_URL", "").strip()
-    if url:
-        parsed = urlparse(url)
-        if parsed.scheme != "https" or not parsed.hostname:
-            raise ValueError("Webhook comercial exige HTTPS")
-        token = os.getenv("COMMERCIAL_WEBHOOK_TOKEN", "")
-        headers = {"Authorization": "Bearer " + token} if token else {}
-        async with httpx.AsyncClient(timeout=12, follow_redirects=False, trust_env=False) as client:
-            result = await client.post(url, json=data, headers=headers)
-        result.raise_for_status()
-        return "webhook", ""
-
-    host, target = os.getenv("SMTP_HOST", ""), os.getenv("COMMERCIAL_TO", "")
-    if host and target:
-        msg = EmailMessage()
-        msg["From"] = os.getenv("SMTP_FROM") or os.getenv("SMTP_USER")
-        msg["To"] = target
-        msg["Subject"] = "ISM Telecom | Novo interessado em fibra"
-        msg.set_content(
-            "Novo contato captado por tecnico ISM.\n"
-            f"Protocolo: {data['protocolo']}\n"
-            f"Data: {data['data']}\n"
-            f"Nome: {data['nome']}\n"
-            f"CPF: {data['cpf']}\n"
-            f"Telefone: {data['telefone']}\n"
-            f"ID Cliente: {data['id_cliente']}\n"
-            f"Tecnico: {data['tecnico']}\n"
-            "Consentimento para contato: sim\n"
-        )
-        def send_mail():
-            with smtplib.SMTP_SSL(host, int(os.getenv("SMTP_PORT", "465")), timeout=12) as smtp:
-                smtp.login(os.getenv("SMTP_USER", ""), os.getenv("SMTP_PASSWORD", ""))
-                smtp.send_message(msg)
-        await asyncio.to_thread(send_mail)
-        return "email", ""
-    # Sem destino comercial configurado, a alternativa autorizada é abrir
-    # atendimento diretamente com o interessado. Isso não equivale a notificar
-    # um número interno; o lead continua completo no banco SQLite do ISM.
-    if prospect_whatsapp_configured() and len(number) == 11 and number[2] == "9":
-        message_id = await whatsapp_opa.send_template(
-            "prospecto", "55" + number,
-            [data["nome"].split()[0], "ISM TELECOM"],
-            open_customer_service=True,
-        )
-        return "opa_cliente", message_id
-    raise ValueError("Canal comercial não configurado")
+    O cadastro completo (CPF e técnico) fica SOMENTE no banco privado /data/leads.db.
+    Não enviar dados pessoais no template, não criar atendimento automaticamente.
+    """
+    phone = digits(data["telefone"])
+    if not commercial_configured(data):
+        raise ValueError("Modelo ao interessado não configurado ou celular inválido")
+    message_id = await whatsapp_opa.send_template(
+        "prospecto", "55" + phone,
+        [data["nome"].split()[0], "ISM TELECOM"],
+    )
+    return "opa_cliente", message_id
 
 
 def lead_response(protocol, state, channel=""):
     if state == "encaminhado" and channel == "opa_cliente":
         return {
             "enviado": True, "situacao": "mensagem_cliente", "protocolo": protocol,
-            "mensagem": "Opa! Suite aceitou a solicitação de mensagem ao interessado "
-                        "e abertura de atendimento. A entrega e o direcionamento "
-                        "ao comercial devem ser verificados no Opa! Suite."
+            "mensagem": "Opa! Suite aceitou o convite enviado ao interessado. "
+                        "Se desejar contratar, ele poderá procurar o comercial. "
+                        "A entrega precisa ser confirmada no Opa! Suite."
         }
     if state == "encaminhado":
         return {"enviado": True, "situacao": "encaminhado", "protocolo": protocol,
