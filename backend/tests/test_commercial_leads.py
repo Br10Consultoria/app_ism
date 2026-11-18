@@ -53,11 +53,14 @@ def test_commercial_opa_accepts_lead_then_no_duplicate(monkeypatch, tmp_path):
     assert first.status_code == 200, first.text
     assert first.json()["enviado"] is True
     assert first.json()["situacao"] == "encaminhado"
-    assert len(list_leads("encaminhado")) == 1
+    saved = list_leads("encaminhado")
+    assert len(saved) == 1
+    assert saved[0]["cpf"] == "52998224725"
+    assert saved[0]["tecnico"] == "Tecnico de campo"
     assert calls == [[
         "interessados", "5571977776666",
-        ["Interessado Teste", "71988887777", "Tecnico de campo",
-         first.json()["protocolo"]],
+        ["Interessado Teste", "71988887777",
+         "Tecnico de campo | CPF: 52998224725", first.json()["protocolo"]],
     ]]
     again = client.post("/api/v1/interessados", headers=headers, json=payload())
     assert again.status_code == 200
@@ -118,3 +121,29 @@ def test_leads_db_private_permissions(monkeypatch, tmp_path):
     with sqlite3.connect(tmp_path / "leadbook.db") as db:
         count = db.execute("SELECT COUNT(*) FROM interessados").fetchone()[0]
         assert count == 1
+
+
+def test_internal_commercial_precedes_customer_template_when_both_enabled(monkeypatch, tmp_path):
+    """O cliente receber mensagem não deve suprimir dados do comercial."""
+    headers = config(monkeypatch, tmp_path)
+    monkeypatch.setenv("OPA_PROSPECT_WHATSAPP_ENABLED", "true")
+    monkeypatch.setenv("OPA_TEMPLATE_PROSPECT_ID", "6aa3fcaad95fdf7490e33108")
+    calls = []
+
+    async def fake_send(kind, phone, parameters, **kwargs):
+        calls.append((kind, phone, parameters))
+        return "opa-interno-123"
+
+    monkeypatch.setattr(whatsapp_opa, "send_template", fake_send)
+    response = client.post("/api/v1/interessados", headers=headers, json=payload())
+    assert response.status_code == 200, response.text
+    assert response.json()["situacao"] == "encaminhado"
+    assert len(calls) == 1
+    assert calls[0][0] == "interessados"
+    assert calls[0][1] == "5571977776666"
+    assert "Tecnico de campo" in calls[0][2][2]
+    assert "CPF: 52998224725" in calls[0][2][2]
+    # Sem duplicações em novo clique ou após reabrir o app.
+    assert client.post("/api/v1/interessados",
+                       headers=headers, json=payload()).json()["protocolo"] == response.json()["protocolo"]
+    assert len(calls) == 1
