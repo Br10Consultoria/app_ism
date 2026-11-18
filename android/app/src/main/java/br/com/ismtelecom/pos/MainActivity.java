@@ -1819,7 +1819,7 @@ public class MainActivity extends Activity {
         screenType = "lead";
         resetSession();
         closePdf();
-        initScreen("Quero contratar", "Preencha os dados para nossa equipe comercial entrar em contato.", true);
+        initScreen("Quero contratar", "Cadastre o interessado para ele receber um convite da ISM. Caso queira contratar, ele poderá procurar o comercial pelo link de indicação.", true);
         EditText name = field("Nome completo", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
         EditText phone = field("Telefone com DDD (ex.: 71 9XXXX-XXXX)", InputType.TYPE_CLASS_PHONE);
         phone.setInputType(InputType.TYPE_CLASS_PHONE);
@@ -1827,12 +1827,12 @@ public class MainActivity extends Activity {
         EditText customerId = field("ID Cliente (opcional)", InputType.TYPE_CLASS_TEXT);
         EditText tech = field("Identificação do técnico", InputType.TYPE_CLASS_TEXT);
         CheckBox consent = new CheckBox(this);
-        consent.setText("O interessado autorizou a ISM Telecom a entrar em contato pelo WhatsApp ou telefone para tratar da contratação.");
+        consent.setText("O interessado autorizou receber um convite da ISM pelo WhatsApp para conhecer os planos e, se desejar, contatar o comercial.");
         consent.setTextSize(13);
         consent.setTextColor(NAVY);
         content.addView(consent, margins(-1, -2, 12));
 
-        primary("Enviar para o comercial", v -> {
+        primary("Enviar convite ao interessado", v -> {
             String nameValue = name.getText().toString().trim();
             String phoneValue = digits(phone.getText().toString());
             String cpfValue = digits(cpf.getText().toString());
@@ -1868,8 +1868,22 @@ public class MainActivity extends Activity {
                 dialog("Marque a autorização do interessado para contato.");
                 return;
             }
+            // Somente uma instalação ativada pode vincular captação ao terminal.
+            if (TerminalRegistryStore.assignedNumber(this).isEmpty()) {
+                dialog("Não foi possível identificar esta maquineta. "
+                        + "Volte ao início e confira o número ISM do terminal.");
+                return;
+            }
+            final String installation;
+            try {
+                installation = TerminalRegistryStore.installationId(this);
+            } catch (IOException error) {
+                dialog("Falha ao identificar o terminal. Tente novamente.");
+                return;
+            }
             JSONObject data = new JSONObject();
             try {
+                data.put("installation_uuid", installation);
                 data.put("nome", nameValue);
                 data.put("cpf", cpfValue);
                 data.put("telefone", phoneValue);
@@ -1899,11 +1913,38 @@ public class MainActivity extends Activity {
                             "Dados salvos no servidor. Encaminhamento ao comercial pendente.",
                             true);
                 }
-                content.addView(label("Protocolo: " + response.optString("protocolo"),
+                String indication = response.optString(
+                        "indicacao", "CAP-" + response.optString("protocolo"));
+                content.addView(label("Indicação: " + indication,
                         18, NAVY, true), margins(-1, -2, 14));
+                content.addView(label(
+                        "Maquineta: " + TerminalRegistryStore.assignedNumber(this)
+                                + " • Técnico: " + techValue,
+                        13, NAVY, false), margins(-1, -2, 12));
                 content.addView(label(response.optString("mensagem",
                         "Solicitação registrada no servidor ISM."),
                         14, MUTED, false), margins(-1, -2, 16));
+                String referralLink = response.optString("link_indicacao", "");
+                if (referralLink.startsWith("https://app.ismtelecom.com.br/i/CAP-")) {
+                    Button copyReferral = button(
+                            "Copiar link de indicação", NAVY, false);
+                    copyReferral.setOnClickListener(x -> {
+                        ClipboardManager clipboard = (ClipboardManager)
+                                getSystemService(Context.CLIPBOARD_SERVICE);
+                        if (clipboard != null) {
+                            clipboard.setPrimaryClip(ClipData.newPlainText(
+                                    "Indicação ISM", referralLink));
+                            Toast.makeText(this, "Link copiado", Toast.LENGTH_SHORT).show();
+                        }
+                    });
+                    content.addView(copyReferral, margins(-1, dp(58), 12));
+                    if (!response.optBoolean("link_incluido", false)) {
+                        content.addView(label(
+                                "O modelo atual do WhatsApp ainda não inclui "
+                                + "o link; configure o template de indicação no Opa! Suite.",
+                                12, MUTED, false), margins(-1, -2, 12));
+                    }
+                }
                 primary("Voltar ao início", ignoredButton -> showHome());
             });
         });

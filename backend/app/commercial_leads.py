@@ -4,6 +4,7 @@ A mensagem ao comercial pode falhar, mas o interessado não desaparece.
 O volume /data é persistente; acesso a estes dados deve ser restrito ao operador.
 """
 import json
+import re
 import os
 import sqlite3
 import time
@@ -38,6 +39,14 @@ def _database():
                 detalhe TEXT NOT NULL DEFAULT ''
             )
         """)
+        # Migração sem perder captações de versões anteriores.
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(interessados)")}
+        if "terminal_id" not in columns:
+            conn.execute("ALTER TABLE interessados ADD COLUMN terminal_id TEXT NOT NULL DEFAULT ''")
+        if "visitas_link" not in columns:
+            conn.execute("ALTER TABLE interessados ADD COLUMN visitas_link INTEGER NOT NULL DEFAULT 0")
+        if "ultima_visita" not in columns:
+            conn.execute("ALTER TABLE interessados ADD COLUMN ultima_visita INTEGER NOT NULL DEFAULT 0")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_interessados_estado "
             "ON interessados (estado, criado_em)"
@@ -68,13 +77,51 @@ def save_interest(data):
             protocol = uuid.uuid4().hex[:12].upper()
             conn.execute(
                 "INSERT INTO interessados "
-                "(protocolo, criado_em, cpf, telefone, nome, id_cliente, tecnico, estado) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'pendente')",
+                "(protocolo, criado_em, cpf, telefone, nome, id_cliente, tecnico, terminal_id, estado) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pendente')",
                 (protocol, timestamp, data["cpf"], data["telefone"],
-                 data["nome"], data["id_cliente"], data["tecnico"])
+                 data["nome"], data["id_cliente"], data["tecnico"],
+                 data.get("terminal_id", ""))
             )
             return {"protocolo": protocol, "estado": "pendente",
                     "canal": "", "novo": True}
+    finally:
+        conn.close()
+
+
+def lookup_referral(protocol: str):
+    """Informações da captação. Nunca usar diretamente numa resposta pública."""
+    if not isinstance(protocol, str) or not re.fullmatch(r"[A-F0-9]{12}", protocol):
+        return None
+    conn = _database()
+    try:
+        row = conn.execute(
+            "SELECT protocolo,criado_em,cpf,telefone,nome,id_cliente,tecnico,"
+            "terminal_id,estado,canal,visitas_link,ultima_visita "
+            "FROM interessados WHERE protocolo=?", (protocol,)
+        ).fetchone()
+        if row is None:
+            return None
+        keys = ("protocolo","criado_em","cpf","telefone","nome","id_cliente",
+                "tecnico","terminal_id","estado","canal","visitas_link",
+                "ultima_visita")
+        return dict(zip(keys, row))
+    finally:
+        conn.close()
+
+
+def register_referral_click(protocol: str) -> bool:
+    """Registra clique sem IP, cookie, CPF ou identificação do navegador."""
+    if not isinstance(protocol, str) or not re.fullmatch(r"[A-F0-9]{12}", protocol):
+        return False
+    conn = _database()
+    try:
+        with conn:
+            cursor = conn.execute(
+                "UPDATE interessados SET visitas_link=visitas_link+1, ultima_visita=? "
+                "WHERE protocolo=?", (int(time.time()), protocol)
+            )
+            return cursor.rowcount == 1
     finally:
         conn.close()
 
