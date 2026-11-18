@@ -14,21 +14,21 @@ import sqlite3
 import time
 import uuid
 from threading import Lock
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from .ixc import IXC, IXCError, digits, valid_cpf, valid_document, format_document, pick
 from .pix_confirmation import verify_pix_receipt
-from .terminal_activation import redeem, redeem_and_register, register_device, ActivationError
+from .terminal_activation import redeem, redeem_and_register, register_device, lookup_terminal_number, ActivationError
 from .boleto_email import registered_email, mask_email, reserve_ixc_send, BoletoEmailError
 from .alternate_boleto_email import (request_code as request_alternate_email_code,
                                      consume_code as consume_alternate_email_code,
                                      send_verified_pdf)
-from .commercial_leads import save_interest, claim_for_send, set_status
+from .commercial_leads import save_interest, claim_for_send, set_status, lookup_referral, register_referral_click
 from . import whatsapp_opa
 from .whatsapp_provider import (
     WhatsAppError, customer_phone, phone_mask, first_name, new_customer,
@@ -95,6 +95,12 @@ class Lead(BaseModel):
     id_cliente: str = Field(default="", max_length=40)
     tecnico: str = Field(min_length=2, max_length=80)
     consentimento: bool
+    # UUID da instalação já ativada, usado pelo servidor para obter o ISM-NNNN.
+    # Campo opcional somente para não quebrar APKs antigos.
+    installation_uuid: str | None = Field(
+        default=None, min_length=36, max_length=36,
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    )
 
 
 def require_terminal(x_terminal_key: str = Header(default="")):
@@ -215,7 +221,7 @@ async def validar_terminal():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.12.6", "sessao_segundos": 300}
+    return {"app": "ISM Telecom", "versao": "0.12.7", "sessao_segundos": 300}
 
 
 @app.post("/api/v1/sessao/renovar",
@@ -525,13 +531,79 @@ async def pagamento(invoice_id: int, kind: str, body: SessionRequest):
 
 
 
+REFERRAL_RE = re.compile(r"^CAP-([A-F0-9]{12})$")
+
+
+def commercial_link_number():
+    """Apenas número empresarial autorizado; jamais aceitar número vindo do APK."""
+    number = digits(os.getenv("COMMERCIAL_WHATSAPP_PHONE", ""))
+    if len(number) == 11 and number[2] == "9":
+        number = "55" + number
+    if not re.fullmatch(r"55[1-9][0-9]9[0-9]{8}", number):
+        return ""
+    return number
+
+
+def referral_url(protocol):
+    return "https://app.ismtelecom.com.br/i/CAP-" + str(protocol)
+
+
+def require_ism_admin(x_ism_admin_key: str = Header(default="")):
+    token = os.getenv("ISM_ADMIN_KEY", "")
+    if len(token) < 32:
+        raise HTTPException(503, "Consulta administrativa ainda não habilitada")
+    if not hmac.compare_digest(token.encode(), x_ism_admin_key.encode()):
+        raise HTTPException(401, "Acesso administrativo não autorizado")
+
+
+@app.get("/i/{referral}", include_in_schema=False)
+async def open_referral(referral: str):
+    """O link só contém um código aleatório, nunca CPF, telefone ou técnico."""
+    found = REFERRAL_RE.fullmatch(referral)
+    if not found:
+        raise HTTPException(404, "Indicação não encontrada")
+    phone = commercial_link_number()
+    if not phone:
+        raise HTTPException(503, "Canal comercial ainda não configurado")
+    protocol = found.group(1)
+    if not register_referral_click(protocol):
+        raise HTTPException(404, "Indicação não encontrada")
+    text = "Olá! Quero conhecer os planos da ISM Telecom. Minha indicação: " + referral
+    redirect = "https://wa.me/" + phone + "?text=" + quote(text, safe="")
+    return RedirectResponse(
+        url=redirect, status_code=302,
+        headers={"Cache-Control": "no-store, private",
+                 "Referrer-Policy": "no-referrer"},
+    )
+
+
+@app.get("/api/v1/admin/captacoes/{referral}",
+         dependencies=[Depends(require_ism_admin), Depends(throttle)])
+async def admin_referral(referral: str):
+    """Consulta protegida por chave administrativa distinta da TERMINAL_KEY."""
+    match = REFERRAL_RE.fullmatch(referral)
+    if not match:
+        raise HTTPException(404, "Indicação não encontrada")
+    record = lookup_referral(match.group(1))
+    if not record:
+        raise HTTPException(404, "Indicação não encontrada")
+    return JSONResponse(
+        {"indicacao": referral, **record},
+        headers={"Cache-Control": "no-store, private",
+                 "Pragma": "no-cache"},
+    )
+
+
 def prospect_whatsapp_configured():
     """Opa! Suite com template próprio e opt-in administrativo explícito."""
     return (
         os.getenv("WHATSAPP_PROVIDER", "").strip().lower() == "opa"
         and os.getenv("OPA_PROSPECT_WHATSAPP_ENABLED", "").strip().lower()
             in ("true", "1", "s", "sim")
-        and whatsapp_opa.configured("prospecto")
+        and (
+            whatsapp_opa.configured("prospecto_indicacao")
+            or whatsapp_opa.configured("prospecto")
+        )
     )
 
 
@@ -552,6 +624,17 @@ async def send_commercial(data):
     phone = digits(data["telefone"])
     if not commercial_configured(data):
         raise ValueError("Modelo ao interessado não configurado ou celular inválido")
+    # Modelo com link deve ser APROVADO no Opa/Meta antes de ser habilitado:
+    # 3 variáveis na ordem Nome, Marca, Link. Jamais enviar CPF no template.
+    if (whatsapp_opa.configured("prospecto_indicacao") and commercial_link_number()):
+        message_id = await whatsapp_opa.send_template(
+            "prospecto_indicacao", "55" + phone,
+            [data["nome"].split()[0], "ISM TELECOM",
+             referral_url(data["protocolo"])],
+        )
+        return "opa_cliente_link", message_id
+    # Compatibilidade com o modelo de 2 variáveis já aprovado: ainda envia
+    # convite, mas NÃO finge que incluiu um link no WhatsApp.
     message_id = await whatsapp_opa.send_template(
         "prospecto", "55" + phone,
         [data["nome"].split()[0], "ISM TELECOM"],
@@ -560,20 +643,36 @@ async def send_commercial(data):
 
 
 def lead_response(protocol, state, channel=""):
+    link = referral_url(protocol)
+    if state == "encaminhado" and channel == "opa_cliente_link":
+        return {
+            "enviado": True, "situacao": "mensagem_cliente",
+            "link_incluido": True, "protocolo": protocol,
+            "indicacao": "CAP-" + protocol, "link_indicacao": link,
+            "mensagem": "Convite e link individual aceitos pelo Opa! Suite. "
+                        "O cliente ainda precisa clicar e enviar a mensagem ao comercial."
+        }
     if state == "encaminhado" and channel == "opa_cliente":
         return {
-            "enviado": True, "situacao": "mensagem_cliente", "protocolo": protocol,
-            "mensagem": "Opa! Suite aceitou o convite enviado ao interessado. "
-                        "Se desejar contratar, ele poderá procurar o comercial. "
-                        "A entrega precisa ser confirmada no Opa! Suite."
+            "enviado": True, "situacao": "mensagem_cliente",
+            "link_incluido": False, "protocolo": protocol,
+            "indicacao": "CAP-" + protocol, "link_indicacao": link,
+            "mensagem": "Convite aceito pelo Opa! Suite. Para incluir o link no WhatsApp "
+                        "é necessário configurar um novo modelo aprovado com 3 variáveis."
         }
     if state == "encaminhado":
-        return {"enviado": True, "situacao": "encaminhado", "protocolo": protocol,
+        return {"enviado": True, "situacao": "encaminhado",
+                "indicacao": "CAP-" + protocol, "link_indicacao": link,
+                "protocolo": protocol,
                 "mensagem": "Solicitação registrada e aceita pelo canal comercial."}
     if state == "revisar":
-        return {"enviado": False, "situacao": "revisar", "protocolo": protocol,
+        return {"enviado": False, "situacao": "revisar",
+                "indicacao": "CAP-" + protocol, "link_indicacao": link,
+                "protocolo": protocol,
                 "mensagem": "Contato registrado. Confirme o encaminhamento antes de repetir."}
-    return {"enviado": False, "situacao": "pendente", "protocolo": protocol,
+    return {"enviado": False, "situacao": "pendente",
+            "indicacao": "CAP-" + protocol, "link_indicacao": link,
+            "protocolo": protocol,
             "mensagem": "Contato registrado. Encaminhamento ao comercial pendente."}
 
 
@@ -605,8 +704,19 @@ async def interessados(body: Lead):
     if len(body.nome.strip()) < 2 or len(body.tecnico.strip()) < 2:
         raise HTTPException(422, "Informe o nome do interessado e do técnico")
 
+    # O ID da máquina só é aceito se foi atribuído pelo QR e registrado no
+    # terminal_registry. Não confiar em texto ISM-NNNN enviado pelo app.
+    try:
+        terminal_id = (lookup_terminal_number(body.installation_uuid)
+                       if body.installation_uuid else "")
+    except (OSError, sqlite3.Error, ActivationError):
+        raise HTTPException(503, "Não foi possível verificar a maquineta ISM")
+    if body.installation_uuid and not terminal_id:
+        raise HTTPException(409, "Maquineta não ativada. Abra o início e confira o número ISM.")
+
     data = {
         "data": datetime.now(timezone.utc).isoformat(),
+        "terminal_id": terminal_id,
         "cpf": digits(body.cpf),
         "telefone": phone,
         "nome": body.nome.strip(),
