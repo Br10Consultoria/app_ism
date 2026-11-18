@@ -1821,8 +1821,9 @@ public class MainActivity extends Activity {
         closePdf();
         initScreen("Quero contratar", "Preencha os dados para nossa equipe comercial entrar em contato.", true);
         EditText name = field("Nome completo", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
-        EditText phone = field("Contato (DDD + telefone)", InputType.TYPE_CLASS_PHONE);
-        EditText cpf = field("CPF do interessado", InputType.TYPE_CLASS_NUMBER);
+        EditText phone = field("Telefone com DDD (ex.: 71 9XXXX-XXXX)", InputType.TYPE_CLASS_PHONE);
+        phone.setInputType(InputType.TYPE_CLASS_PHONE);
+        EditText cpf = field("CPF do interessado (11 dígitos)", InputType.TYPE_CLASS_NUMBER);
         EditText customerId = field("ID Cliente (opcional)", InputType.TYPE_CLASS_TEXT);
         EditText tech = field("Identificação do técnico", InputType.TYPE_CLASS_TEXT);
         CheckBox consent = new CheckBox(this);
@@ -1836,10 +1837,35 @@ public class MainActivity extends Activity {
             String phoneValue = digits(phone.getText().toString());
             String cpfValue = digits(cpf.getText().toString());
             String techValue = tech.getText().toString().trim();
-            if (nameValue.length() < 2 || cpfValue.length() != 11
-                    || (phoneValue.length() != 10 && phoneValue.length() != 11)
-                    || techValue.length() < 2 || !consent.isChecked()) {
-                dialog("Preencha nome, CPF, telefone, identificação do técnico e consentimento.");
+            // Validar separadamente: não culpar todos os campos quando falta só o DDD.
+            // O IXC/backend validam os dados novamente ao receber o lead.
+            if (nameValue.length() < 2) {
+                name.setError("Informe o nome do interessado.");
+                name.requestFocus();
+                dialog("Informe o nome do interessado.");
+                return;
+            }
+            if (cpfValue.length() != 11 || !validCpfLead(cpfValue)) {
+                cpf.setError("CPF inválido: confira os 11 dígitos.");
+                cpf.requestFocus();
+                dialog("CPF inválido. Confira o número informado.");
+                return;
+            }
+            if (phoneValue.length() != 10 && phoneValue.length() != 11) {
+                phone.setError("Informe DDD + telefone (10 ou 11 dígitos).");
+                phone.requestFocus();
+                dialog("Telefone incompleto: informe o DDD junto com o número.");
+                return;
+            }
+            if (techValue.length() < 2) {
+                tech.setError("Informe a identificação do técnico.");
+                tech.requestFocus();
+                dialog("Informe a identificação do técnico.");
+                return;
+            }
+            if (!consent.isChecked()) {
+                consent.requestFocus();
+                dialog("Marque a autorização do interessado para contato.");
                 return;
             }
             JSONObject data = new JSONObject();
@@ -1881,6 +1907,29 @@ public class MainActivity extends Activity {
                 primary("Voltar ao início", ignoredButton -> showHome());
             });
         });
+    }
+
+    /** Mesma regra de dígitos verificadores CPF adotada pela API do ISM. */
+    private static boolean validCpfLead(String value) {
+        if (value == null || !value.matches("[0-9]{11}")) return false;
+        boolean allSame = true;
+        for (int i = 1; i < 11; i++) {
+            if (value.charAt(i) != value.charAt(0)) {
+                allSame = false;
+                break;
+            }
+        }
+        if (allSame) return false;
+        for (int len = 9; len <= 10; len++) {
+            int sum = 0;
+            for (int i = 0; i < len; i++) {
+                sum += (value.charAt(i) - '0') * (len + 1 - i);
+            }
+            int number = (sum * 10) % 11;
+            if (number == 10) number = 0;
+            if (number != value.charAt(len) - '0') return false;
+        }
+        return true;
     }
 
     private void hideKeyboard(View view) {
