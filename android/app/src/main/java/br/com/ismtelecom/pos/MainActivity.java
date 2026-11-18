@@ -681,15 +681,7 @@ public class MainActivity extends Activity {
 
         Button bills = button("Boletos e pagamentos", CYAN, false);
         bills.setOnClickListener(v -> showLookup());
-        content.addView(bills, margins(-1, dp(86), 22));
-
-        TextView warning = label("Serviço de consulta. Confirme os dados antes de pagar no seu banco.", 12, MUTED, false);
-        warning.setGravity(Gravity.CENTER);
-        content.addView(warning, margins(-1, -2, 20));
-
-        TextView provisioned = label("Terminal autorizado para consultas ISM", 11, MUTED, false);
-        provisioned.setGravity(Gravity.CENTER);
-        content.addView(provisioned, margins(-1, -2, 8));
+        content.addView(bills, margins(-1, dp(86), 14));
 
         LinearLayout deviceInfo = col();
         deviceInfo.setPadding(dp(12), dp(10), dp(12), dp(10));
@@ -1048,7 +1040,7 @@ public class MainActivity extends Activity {
         closePdf();
         initScreen("Escolha como pagar",
                 "Selecione uma opção para a fatura IXC nº " + id, true);
-        Button pix = button("▦  Pagar com PIX (QR Code)", CYAN, true);
+        Button pix = button("▦  Pagar com PIX (QR Code)", NAVY, false);
         pix.setOnClickListener(v -> requestPayment(id, "pix"));
         content.addView(pix, margins(-1, dp(75), 15));
         // Código bancário continua acessível pelo botão Imprimir código,
@@ -1280,9 +1272,8 @@ public class MainActivity extends Activity {
             executor.execute(() -> {
                 GertecNativePrinter.Result printed = GertecNativePrinter.print(getApplicationContext(), receipt);
                 ui.post(() -> {
-                    if (printed.submitted) {
-                        dialog(printed.detail);
-                    } else {
+                    if (!printed.submitted) {
+                        // Falhas continuam visíveis; comando aceito não abre caixa modal.
                         showThermalPreview(receipt, printed.detail);
                     }
                 });

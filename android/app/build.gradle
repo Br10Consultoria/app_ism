@@ -17,8 +17,8 @@ android {
         applicationId 'br.com.ismtelecom.pos'
         minSdk 26
         targetSdk 35
-        versionCode 27
-        versionName '0.12.7'
+        versionCode 28
+        versionName '0.12.8'
         def url = (project.findProperty('ismBackendUrl') ?: 'https://app.ismtelecom.com.br').toString()
         buildConfigField 'String', 'API_BASE', '"' + url.replace('\\', '\\\\').replace('"', '\\"') + '"'
     }
