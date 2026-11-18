@@ -215,7 +215,7 @@ async def validar_terminal():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.12.3", "sessao_segundos": 300}
+    return {"app": "ISM Telecom", "versao": "0.12.5", "sessao_segundos": 300}
 
 
 @app.post("/api/v1/sessao/renovar",
@@ -559,14 +559,6 @@ def commercial_configured(data=None):
 async def send_commercial(data):
     """Conversa com interessado via Opa ou aviso interno via canais comerciais."""
     number = digits(data["telefone"])
-    if prospect_whatsapp_configured() and len(number) == 11 and number[2] == "9":
-        message_id = await whatsapp_opa.send_template(
-            "prospecto", "55" + number,
-            [data["nome"].split()[0], "ISM TELECOM"],
-            open_customer_service=True,
-        )
-        return "opa_cliente", message_id
-
     if (os.getenv("WHATSAPP_PROVIDER", "").lower() == "opa"
             and os.getenv("OPA_TEMPLATE_LEAD_ID", "")
             and os.getenv("OPA_COMMERCIAL_PHONE", "")):
@@ -576,8 +568,12 @@ async def send_commercial(data):
             destination = "55" + destination
         if len(destination) != 13 or not destination.startswith("55") or destination[4] != "9":
             raise ValueError("OPA_COMMERCIAL_PHONE inválido")
+        # O template já aprovado possui 4 variáveis. Preservar a quantidade e
+        # incluir CPF junto à identificação do técnico, destinados SOMENTE ao
+        # telefone interno do comercial; nunca incluir CPF no template ao cliente.
+        technician_and_cpf = (data["tecnico"] + " | CPF: " + data["cpf"])
         message_id = await whatsapp_opa.send_template("interessados", destination, [
-            data["nome"], data["telefone"], data["tecnico"], data["protocolo"]
+            data["nome"], data["telefone"], technician_and_cpf, data["protocolo"]
         ])
         return "opa", message_id
 
@@ -616,6 +612,16 @@ async def send_commercial(data):
                 smtp.send_message(msg)
         await asyncio.to_thread(send_mail)
         return "email", ""
+    # Sem destino comercial configurado, a alternativa autorizada é abrir
+    # atendimento diretamente com o interessado. Isso não equivale a notificar
+    # um número interno; o lead continua completo no banco SQLite do ISM.
+    if prospect_whatsapp_configured() and len(number) == 11 and number[2] == "9":
+        message_id = await whatsapp_opa.send_template(
+            "prospecto", "55" + number,
+            [data["nome"].split()[0], "ISM TELECOM"],
+            open_customer_service=True,
+        )
+        return "opa_cliente", message_id
     raise ValueError("Canal comercial não configurado")
 
 
