@@ -1,10 +1,8 @@
-"""Homologação do cadastro comercial sem envios reais à API Opa."""
+"""Quero contratar: apenas convite ao próprio interessado; sem envio para comercial interno."""
 import os
 import sqlite3
-
 import httpx
 from fastapi.testclient import TestClient
-
 from app import main as module
 from app import whatsapp_opa
 from app.commercial_leads import list_leads
@@ -15,7 +13,7 @@ client = TestClient(module.app)
 def payload():
     return {
         "nome": "Interessado Teste",
-        "cpf": "52998224725",
+        "cpf": "52998224725",  # documento de teste; não é dado do usuário
         "telefone": "71988887777",
         "id_cliente": "",
         "tecnico": "Tecnico de campo",
@@ -33,117 +31,83 @@ def config(monkeypatch, tmp_path):
     monkeypatch.setenv("OPA_CHANNEL_ID", "679cc77501d3afa6ad0a1178")
     monkeypatch.setenv("OPA_TEMPLATE_LEAD_ID", "6924bc62fe20def174e09d5c")
     monkeypatch.setenv("OPA_COMMERCIAL_PHONE", "71977776666")
-    monkeypatch.delenv("COMMERCIAL_WEBHOOK_URL", raising=False)
-    monkeypatch.delenv("SMTP_HOST", raising=False)
-    monkeypatch.delenv("COMMERCIAL_TO", raising=False)
+    monkeypatch.setenv("OPA_TEMPLATE_PROSPECT_ID", "6aa3fcaad95fdf7490e33108")
+    monkeypatch.setenv("OPA_PROSPECT_WHATSAPP_ENABLED", "false")
+    monkeypatch.setenv("COMMERCIAL_WEBHOOK_URL", "https://internal.example.test/leads")
+    monkeypatch.setenv("SMTP_HOST", "smtp.internal.example.test")
+    monkeypatch.setenv("COMMERCIAL_TO", "internal@example.test")
     module.attempts.clear()
     return {"X-Terminal-Key": os.getenv("TERMINAL_KEY")}
 
 
-def test_commercial_opa_accepts_lead_then_no_duplicate(monkeypatch, tmp_path):
+def test_internal_channel_never_receives_automatic_new_interest(monkeypatch, tmp_path):
     headers = config(monkeypatch, tmp_path)
     calls = []
 
-    async def fake_send(kind, phone, parameters):
-        calls.append([kind, phone, parameters])
-        return "opa-test-id-123"
+    async def fake_send(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "unexpected"
+
+    monkeypatch.setattr(whatsapp_opa, "send_template", fake_send)
+    response = client.post("/api/v1/interessados", headers=headers, json=payload())
+    assert response.status_code == 200, response.text
+    assert response.json()["situacao"] == "pendente"
+    assert response.json()["enviado"] is False
+    assert calls == []
+    saved = list_leads("pendente")
+    assert len(saved) == 1
+    assert saved[0]["cpf"] == payload()["cpf"]
+    assert saved[0]["tecnico"] == payload()["tecnico"]
+    assert saved[0]["telefone"] == payload()["telefone"]
+
+
+def test_prospect_only_even_with_internal_templates_enabled(monkeypatch, tmp_path):
+    headers = config(monkeypatch, tmp_path)
+    monkeypatch.setenv("OPA_PROSPECT_WHATSAPP_ENABLED", "true")
+    calls = []
+
+    async def fake_send(kind, phone, variables, **kwargs):
+        calls.append((kind, phone, variables, kwargs))
+        return "opa-convite-123"
 
     monkeypatch.setattr(whatsapp_opa, "send_template", fake_send)
     first = client.post("/api/v1/interessados", headers=headers, json=payload())
     assert first.status_code == 200, first.text
+    assert first.json()["situacao"] == "mensagem_cliente"
     assert first.json()["enviado"] is True
-    assert first.json()["situacao"] == "encaminhado"
-    saved = list_leads("encaminhado")
-    assert len(saved) == 1
-    assert saved[0]["cpf"] == "52998224725"
-    assert saved[0]["tecnico"] == "Tecnico de campo"
-    assert calls == [[
-        "interessados", "5571977776666",
-        ["Interessado Teste", "71988887777",
-         "Tecnico de campo | CPF: 52998224725", first.json()["protocolo"]],
-    ]]
+    assert "52998224725" not in first.text
+    assert calls == [(
+        "prospecto", "5571988887777", ["Interessado", "ISM TELECOM"], {}
+    )]
+    stored = list_leads("encaminhado")
+    assert len(stored) == 1
+    assert stored[0]["cpf"] == payload()["cpf"]
+    assert stored[0]["tecnico"] == payload()["tecnico"]
     again = client.post("/api/v1/interessados", headers=headers, json=payload())
-    assert again.status_code == 200
     assert again.json()["protocolo"] == first.json()["protocolo"]
     assert len(calls) == 1
 
 
-def test_commercial_opa_failure_preserves_lead_for_review(monkeypatch, tmp_path):
+def test_failed_outbound_message_preserves_interest_for_review(monkeypatch, tmp_path):
     headers = config(monkeypatch, tmp_path)
+    monkeypatch.setenv("OPA_PROSPECT_WHATSAPP_ENABLED", "true")
 
-    async def uncertain(*args):
-        raise httpx.ReadTimeout("timeout simulado, nao enviado")
+    async def fail(*args, **kwargs):
+        raise httpx.ReadTimeout("timeout simulado")
 
-    monkeypatch.setattr(whatsapp_opa, "send_template", uncertain)
-    first = client.post("/api/v1/interessados", headers=headers, json=payload())
-    assert first.status_code == 200
-    assert first.json()["enviado"] is False
-    assert first.json()["situacao"] == "revisar"
+    monkeypatch.setattr(whatsapp_opa, "send_template", fail)
+    response = client.post("/api/v1/interessados", headers=headers, json=payload())
+    assert response.status_code == 200
+    assert response.json()["situacao"] == "revisar"
     assert len(list_leads("revisar")) == 1
-    assert len(list_leads("pendente")) == 0
-
-
-def test_template_lead_name_and_variable_order(monkeypatch):
-    monkeypatch.setenv("OPA_BASE_URL", "https://opa.example.test")
-    monkeypatch.setenv("OPA_API_TOKEN", "test")
-    monkeypatch.setenv("OPA_CHANNEL_ID", "679cc77501d3afa6ad0a1178")
-    monkeypatch.setenv("OPA_TEMPLATE_LEAD_ID", "6924bc62fe20def174e09d5c")
-
-    class FakeClient:
-        def __init__(self, **kwargs): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *args): return False
-        async def post(self, url, headers, json):
-            assert url.endswith("/api/v1/template/send")
-            assert json["template"]["_id"] == "6924bc62fe20def174e09d5c"
-            assert json["template"]["variaveis"] == [
-                "Interessado Teste", "71988887777", "Tecnico", "ABC123DEF456"]
-            return httpx.Response(200, request=httpx.Request("POST",url),
-                                  json={"status": "success",
-                                        "data": {"messageSentId": "OPA-1"}})
-
-    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
-    import asyncio
-    assert asyncio.run(whatsapp_opa.send_template(
-        "interessados", "5571977776666",
-        ["Interessado Teste", "71988887777", "Tecnico", "ABC123DEF456"]
-    )) == "OPA-1"
 
 
 def test_leads_db_private_permissions(monkeypatch, tmp_path):
     monkeypatch.setenv("LEADS_DB", str(tmp_path / "leadbook.db"))
     from app.commercial_leads import save_interest
-    data = payload()
-    data["protocolo"] = "IGNORED"
-    saved = save_interest(data)
+    saved = save_interest(payload())
     assert saved["estado"] == "pendente"
     assert (tmp_path / "leadbook.db").stat().st_mode & 0o077 == 0
     with sqlite3.connect(tmp_path / "leadbook.db") as db:
-        count = db.execute("SELECT COUNT(*) FROM interessados").fetchone()[0]
-        assert count == 1
-
-
-def test_internal_commercial_precedes_customer_template_when_both_enabled(monkeypatch, tmp_path):
-    """O cliente receber mensagem não deve suprimir dados do comercial."""
-    headers = config(monkeypatch, tmp_path)
-    monkeypatch.setenv("OPA_PROSPECT_WHATSAPP_ENABLED", "true")
-    monkeypatch.setenv("OPA_TEMPLATE_PROSPECT_ID", "6aa3fcaad95fdf7490e33108")
-    calls = []
-
-    async def fake_send(kind, phone, parameters, **kwargs):
-        calls.append((kind, phone, parameters))
-        return "opa-interno-123"
-
-    monkeypatch.setattr(whatsapp_opa, "send_template", fake_send)
-    response = client.post("/api/v1/interessados", headers=headers, json=payload())
-    assert response.status_code == 200, response.text
-    assert response.json()["situacao"] == "encaminhado"
-    assert len(calls) == 1
-    assert calls[0][0] == "interessados"
-    assert calls[0][1] == "5571977776666"
-    assert "Tecnico de campo" in calls[0][2][2]
-    assert "CPF: 52998224725" in calls[0][2][2]
-    # Sem duplicações em novo clique ou após reabrir o app.
-    assert client.post("/api/v1/interessados",
-                       headers=headers, json=payload()).json()["protocolo"] == response.json()["protocolo"]
-    assert len(calls) == 1
+        row = db.execute("SELECT cpf, tecnico FROM interessados").fetchone()
+        assert row == (payload()["cpf"], payload()["tecnico"])
