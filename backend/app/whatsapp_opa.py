@@ -21,6 +21,7 @@ def template_env_key(kind):
         "pix": "OPA_TEMPLATE_PIX_ID",
         "interessados": "OPA_TEMPLATE_LEAD_ID",
         "prospecto": "OPA_TEMPLATE_PROSPECT_ID",
+        "prospecto_indicacao": "OPA_TEMPLATE_PROSPECT_LINK_ID",
     }
     if kind not in keys:
         raise WhatsAppError("Tipo de mensagem Opa inválido", 422)
