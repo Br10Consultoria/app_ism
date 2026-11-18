@@ -161,6 +161,21 @@ def _allocate_number(conn, installation_uuid: str) -> str:
     return f"ISM-{int(row[0]):04d}"
 
 
+def lookup_terminal_number(installation_uuid: str) -> str:
+    """Consulta apenas instalação JÁ ativada; nunca atribui ID durante captação."""
+    if not isinstance(installation_uuid, str) or not INSTALLATION_RE.fullmatch(installation_uuid):
+        raise ActivationError("Identificador da instalação inválido")
+    conn = _connection()
+    try:
+        row = conn.execute(
+            "SELECT id FROM terminal_registry WHERE installation_uuid=?",
+            (installation_uuid,)
+        ).fetchone()
+        return f"ISM-{int(row[0]):04d}" if row else ""
+    finally:
+        conn.close()
+
+
 def register_device(installation_uuid: str) -> str:
     """Atribui ou recupera o mesmo número para instalação já autenticada.
 
