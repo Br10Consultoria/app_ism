@@ -478,7 +478,7 @@ async def confirmar_email_alternativo(invoice_id: int, body: AlternateEmailConfi
             invoice_id, customer_id, body.email, body.codigo)
         # Usa somente o arquivo PDF obtido pelo backend no IXC: não baixa URLs
         # fornecidas pelo app nem por campo de texto para evitar SSRF.
-        pdf = await ixc.payment(invoice, "boleto")
+        pdf = await ixc.boleto_pdf(invoice)
         encoded = pdf.get("pdf_base64", "")
         if not encoded:
             raise HTTPException(
