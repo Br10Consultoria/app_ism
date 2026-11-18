@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- GEDI 2.2.6 requer essas permissões para outros módulos do SDK,
          mas consultar SN e imprimir não requer permissões privilegiadas. -->
     <uses-permission android:name="android.permission.SET_TIME" tools:node="remove" />
@@ -26,6 +27,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Pagamento com cartao (CliSiTef / SiTef GetNet) -->
+        <activity
+            android:name=".SitefPaymentActivity"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

@@ -17,8 +17,8 @@ android {
         applicationId 'br.com.ismtelecom.pos'
         minSdk 26
         targetSdk 35
-        versionCode 28
-        versionName '0.12.8'
+        versionCode 29
+        versionName '0.13.0'
         def url = (project.findProperty('ismBackendUrl') ?: 'https://app.ismtelecom.com.br').toString()
         buildConfigField 'String', 'API_BASE', '"' + url.replace('\\', '\\\\').replace('"', '\\"') + '"'
     }
@@ -49,6 +49,13 @@ android {
         }
         debug {
             debuggable true
+        }
+    }
+    packaging {
+        jniLibs {
+            // CliSiTef: recomendado pela Software Express (libs extraidas).
+            useLegacyPackaging = true
+            keepDebugSymbols += ['**/libclisitef.so']
         }
     }
     buildFeatures { buildConfig true }
