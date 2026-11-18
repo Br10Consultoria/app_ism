@@ -258,11 +258,11 @@ public class MainActivity extends Activity {
             footer.setPadding(dp(12), dp(12), dp(12), dp(12));
 
             TextView assistance = label(
-                    "Importante:\\nCaso ocorra algum problema durante a utilização, "
+                    "Importante:\nCaso ocorra algum problema durante a utilização, "
                     + "entre em contato com nosso atendimento (71) 3334-0606.",
                     11, NAVY, false);
             TextView touch = label(
-                    "☝ Tela sensível ao toque.\\nToque para escolher a opção desejada.",
+                    "☝ Tela sensível ao toque.\nToque para escolher a opção desejada.",
                     11, NAVY, false);
             LinearLayout.LayoutParams left = new LinearLayout.LayoutParams(0, -2, 1);
             LinearLayout.LayoutParams right = new LinearLayout.LayoutParams(0, -2, 1);
