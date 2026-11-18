@@ -148,6 +148,7 @@ def consume_code(invoice_id: int, customer_id: str, address: str, code: str):
         raise BoletoEmailError("Informe o código de seis dígitos")
     now = int(time.time())
     conn = _db()
+    invalid = False
     try:
         with conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -163,18 +164,21 @@ def consume_code(invoice_id: int, customer_id: str, address: str, code: str):
                 "WHERE invoice_id=? AND customer_id=? AND destination=?",
                 (str(invoice_id), customer_id, email),
             )
-            if not hmac.compare_digest(
+            invalid = not hmac.compare_digest(
                 row[0], _digest(invoice_id, customer_id, email, code)
-            ):
-                raise BoletoEmailError("Código inválido", 422)
-            # Consome antes do SMTP para evitar envio simultâneo/repetido.
-            conn.execute(
-                "UPDATE boleto_alt_email_code SET consumed=1 "
-                "WHERE invoice_id=? AND customer_id=? AND destination=?",
-                (str(invoice_id), customer_id, email),
             )
+            if not invalid:
+                # Consome antes do SMTP para impedir envio duplicado simultâneo.
+                conn.execute(
+                    "UPDATE boleto_alt_email_code SET consumed=1 "
+                    "WHERE invoice_id=? AND customer_id=? AND destination=?",
+                    (str(invoice_id), customer_id, email),
+                )
     finally:
         conn.close()
+    # Se o código errou, a contagem de tentativas já foi gravada.
+    if invalid:
+        raise BoletoEmailError("Código inválido", 422)
     return email
 
 
