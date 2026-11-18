@@ -20,8 +20,7 @@ class FakeIXC:
         return {"id": str(invoice_id), "id_cliente": "42",
                 "status": "A", "liberado": "S"}
 
-    async def payment(self, invoice, kind):
-        assert kind == "boleto"
+    async def boleto_pdf(self, invoice):
         return {"pdf_base64": base64.b64encode(
             b"%PDF-1.4\n%documento de teste\n%%EOF").decode(), "url": ""}
 
