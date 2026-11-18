@@ -513,7 +513,11 @@ async def pagamento(invoice_id: int, kind: str, body: SessionRequest):
         info = await ixc.payment(invoice, kind)
         return {"tipo": kind, "id": invoice_id, "valor": make_invoice(invoice)["valor"],
                 "vencimento": make_invoice(invoice)["vencimento"],
-                "emissao": make_invoice(invoice)["emissao"], **info}
+                "emissao": make_invoice(invoice)["emissao"],
+                # Não presumir que ISM Telecom é a razão social do beneficiário.
+                "beneficiario": pick(invoice, (
+                    "beneficiario", "nome_beneficiario", "cedente", "nome_cedente"))[:100],
+                **info}
     except IXCError as err:
         # Erros sem PII nem token.
         raise HTTPException(422, str(err))
