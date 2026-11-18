@@ -28,14 +28,14 @@ BOLETO_EMAIL_DB=/data/boleto_email.db
 
 Os valores são **exemplos**, não credenciais existentes. Usar somente SMTP/relay corporativo autorizado pela conta Workspace, sem compartilhar senha na conversa ou gravá-la no GitHub. Verificar no `backend/docker-compose.yml` se `env_file: [.env]` realmente propaga essas variáveis ao contêiner; não presumir isso sem checagem.
 
-Se o IXC devolver apenas URL do boleto (em vez do PDF Base64), o backend não busca esse URL por segurança; retorna erro explicativo. A rotina padrão do IXC continua funcionando.
+O backend força a consulta do PDF pelo webservice `get_boleto` do IXC; se mesmo assim só houver URL, ele não busca esse URL por segurança e retorna erro explicativo. A rotina padrão do IXC continua funcionando.
 
 ## Release / Robô de Assinatura
 
 O workflow cria:
 - **Debug** para teste local somente, **nunca enviar ao robô**;
-- **Release sem Debug** (sem assinatura Android quando secrets não configurados);
-- **Release assinado pelo desenvolvedor** apenas quando os 4 secrets `ISM_RELEASE_*` forem configurados pela ISM e o workflow for iniciado manualmente na branch.
+- **Release assinado para homologação** em PR: certificado Android **autoassinado**, com `CN=ISM Telecom, OU=Homologacao`, criado temporariamente no job. O APK não é Debug e é validado por `apksigner` (assinatura V2), mas esse certificado **não é permanente nem comprova a identidade jurídica da empresa**. Serve para uma tentativa de assinatura Gertec em **uma única maquineta**.
+- **Release assinado de produção** somente quando os 4 secrets `ISM_RELEASE_*` forem configurados pela própria ISM e o workflow for iniciado manualmente na branch. Essa chave fica sob controle da empresa e permite atualização consistente.
 
 Assinatura Android **não é autenticada pelo texto do nome da empresa**. Um certificado com `CN=ISM Telecom` criado sem uma chave privada gerenciada pela ISM não comprova titularidade e não substitui a assinatura Gertec. O certificado para atualizações futuras deve ser permanente e guardado sob controle da ISM. Veja `docs/GERTEC_ASSINATURA_RELEASE.md`.
 
