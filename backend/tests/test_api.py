@@ -297,7 +297,7 @@ def test_backend_version_and_short_session_ttl():
     version = client.get("/version")
     assert version.status_code == 200
     assert version.json() == {
-        "app": "ISM Telecom", "versao": "0.12.3", "sessao_segundos": 300
+        "app": "ISM Telecom", "versao": "0.12.5", "sessao_segundos": 300
     }
 
     token = create_session("123")
