@@ -249,6 +249,16 @@ class IXC:
             raise IXCError("IXC não confirmou a solicitação de envio do boleto")
         return {"solicitacao_aceita": True, "entrega_confirmada": False}
 
+    async def boleto_pdf(self, invoice):
+        """Solicita PDF diretamente ao IXC, sem confiar em URL de gateway.
+
+        O email alternativo só recebe arquivo recuperado do webservice autorizado.
+        """
+        from_copy = dict(invoice)
+        for link_field in ("gateway_link", "boleto_url", "link_boleto", "url_boleto"):
+            from_copy.pop(link_field, None)
+        return await self.payment(from_copy, "boleto")
+
     async def payment(self, invoice, kind):
         if kind == "pix":
             # IXC get_pix: id_areceber é o campo utilizado em instalações conhecidas.

@@ -25,6 +25,9 @@ from .ixc import IXC, IXCError, digits, valid_cpf, valid_document, format_docume
 from .pix_confirmation import verify_pix_receipt
 from .terminal_activation import redeem, redeem_and_register, register_device, ActivationError
 from .boleto_email import registered_email, mask_email, reserve_ixc_send, BoletoEmailError
+from .alternate_boleto_email import (request_code as request_alternate_email_code,
+                                     consume_code as consume_alternate_email_code,
+                                     send_verified_pdf)
 from .commercial_leads import save_interest, claim_for_send, set_status
 from . import whatsapp_opa
 from .whatsapp_provider import (
@@ -65,6 +68,16 @@ class SessionRequest(BaseModel):
 
 class BoletoEmailRequest(SessionRequest):
     confirmar_envio: bool = False
+
+
+class AlternateEmailRequest(SessionRequest):
+    email: str = Field(min_length=5, max_length=254)
+    consentimento: bool = False
+
+
+class AlternateEmailConfirmRequest(AlternateEmailRequest):
+    codigo: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
+
 
 
 class WhatsAppRequest(SessionRequest):
@@ -202,7 +215,7 @@ async def validar_terminal():
 @app.get("/version")
 async def version():
     """Permite verificar se backend e Android estão na mesma versão."""
-    return {"app": "ISM Telecom", "versao": "0.12.1", "sessao_segundos": 300}
+    return {"app": "ISM Telecom", "versao": "0.12.3", "sessao_segundos": 300}
 
 
 @app.post("/api/v1/sessao/renovar",
@@ -424,6 +437,67 @@ async def enviar_boleto_email(invoice_id: int, body: BoletoEmailRequest):
         raise HTTPException(exc.status, str(exc)) from exc
 
 
+async def _check_open_invoice(ixc, invoice_id, customer_id):
+    invoice = await ixc.invoice(invoice_id)
+    if not invoice or str(invoice.get("id_cliente")) != customer_id:
+        raise HTTPException(404, "Cobrança não encontrada para este cliente")
+    if invoice.get("status") != "A" or invoice.get("liberado") != "S":
+        raise HTTPException(409, "Cobrança não está aberta")
+    return invoice
+
+
+@app.post("/api/v1/faturas/{invoice_id}/email-alternativo/solicitar-codigo",
+          dependencies=[Depends(require_terminal), Depends(throttle)])
+async def solicitar_codigo_email_alternativo(invoice_id: int, body: AlternateEmailRequest):
+    """Somente confirma acesso ao e-mail novo; não envia dados financeiros nessa etapa."""
+    if invoice_id < 1 or not body.consentimento:
+        raise HTTPException(422, "Confirme a autorização do titular para o novo e-mail")
+    customer_id = read_session(body.session)
+    try:
+        ixc = IXC()
+        await _check_open_invoice(ixc, invoice_id, customer_id)
+        return await asyncio.to_thread(request_alternate_email_code,
+                                       invoice_id, customer_id, body.email)
+    except IXCError:
+        raise HTTPException(502, "Não foi possível confirmar a cobrança no IXC")
+    except BoletoEmailError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+@app.post("/api/v1/faturas/{invoice_id}/email-alternativo/confirmar-envio",
+          dependencies=[Depends(require_terminal), Depends(throttle)])
+async def confirmar_email_alternativo(invoice_id: int, body: AlternateEmailConfirmRequest):
+    """Nunca envia boleto para endereço não confirmado pelo código SMTP."""
+    if invoice_id < 1 or not body.consentimento:
+        raise HTTPException(422, "Confirme a autorização do titular para envio")
+    customer_id = read_session(body.session)
+    try:
+        ixc = IXC()
+        invoice = await _check_open_invoice(ixc, invoice_id, customer_id)
+        destination = consume_alternate_email_code(
+            invoice_id, customer_id, body.email, body.codigo)
+        # Usa somente o arquivo PDF obtido pelo backend no IXC: não baixa URLs
+        # fornecidas pelo app nem por campo de texto para evitar SSRF.
+        pdf = await ixc.boleto_pdf(invoice)
+        encoded = pdf.get("pdf_base64", "")
+        if not encoded:
+            raise HTTPException(
+                422,
+                "IXC não disponibilizou o PDF desta fatura para envio a outro e-mail"
+            )
+        sent = await asyncio.to_thread(send_verified_pdf, invoice_id, destination, encoded)
+        return JSONResponse(
+            {"solicitacao_aceita": bool(sent.get("enviado")),
+             "entrega_confirmada": False,
+             "mensagem": "Boleto encaminhado para envio."},
+            headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
+        )
+    except IXCError:
+        raise HTTPException(502, "Não foi possível obter o boleto PDF no IXC")
+    except BoletoEmailError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
 @app.post("/api/v1/faturas/{invoice_id}/{kind}", dependencies=[Depends(require_terminal), Depends(throttle)])
 async def pagamento(invoice_id: int, kind: str, body: SessionRequest):
     if invoice_id < 1 or kind not in ("pix", "barra", "boleto"):
@@ -439,7 +513,11 @@ async def pagamento(invoice_id: int, kind: str, body: SessionRequest):
         info = await ixc.payment(invoice, kind)
         return {"tipo": kind, "id": invoice_id, "valor": make_invoice(invoice)["valor"],
                 "vencimento": make_invoice(invoice)["vencimento"],
-                "emissao": make_invoice(invoice)["emissao"], **info}
+                "emissao": make_invoice(invoice)["emissao"],
+                # Não presumir que ISM Telecom é a razão social do beneficiário.
+                "beneficiario": pick(invoice, (
+                    "beneficiario", "nome_beneficiario", "cedente", "nome_cedente"))[:100],
+                **info}
     except IXCError as err:
         # Erros sem PII nem token.
         raise HTTPException(422, str(err))

@@ -249,6 +249,29 @@ public class MainActivity extends Activity {
             content.addView(sub, margins(-1, -2, 18));
         }
 
+        // Rodapé fixo somente na tela inicial, conforme referência da ISM.
+        if (!back && title.isEmpty() && subtitle.isEmpty()) {
+            LinearLayout footer = new LinearLayout(this);
+            footer.setOrientation(LinearLayout.HORIZONTAL);
+            footer.setGravity(Gravity.CENTER_VERTICAL);
+            footer.setBackgroundColor(Color.rgb(222, 234, 245));
+            footer.setPadding(dp(12), dp(12), dp(12), dp(12));
+
+            TextView assistance = label(
+                    "Importante:\nCaso ocorra algum problema durante a utilização, "
+                    + "entre em contato com nosso atendimento (71) 3334-0606.",
+                    11, NAVY, false);
+            TextView touch = label(
+                    "☝ Tela sensível ao toque.\nToque para escolher a opção desejada.",
+                    11, NAVY, false);
+            LinearLayout.LayoutParams left = new LinearLayout.LayoutParams(0, -2, 1);
+            LinearLayout.LayoutParams right = new LinearLayout.LayoutParams(0, -2, 1);
+            right.leftMargin = dp(15);
+            footer.addView(assistance, left);
+            footer.addView(touch, right);
+            root.addView(footer, new LinearLayout.LayoutParams(-1, -2));
+        }
+
         sessionFooter = null;
         if (deadline > 0) {
             sessionFooter = label("", 11, MUTED, false);
@@ -1028,12 +1051,8 @@ public class MainActivity extends Activity {
         Button pix = button("▦  Pagar com PIX (QR Code)", CYAN, true);
         pix.setOnClickListener(v -> requestPayment(id, "pix"));
         content.addView(pix, margins(-1, dp(75), 15));
-        Button barcode = button("▥  Código de barras", NAVY, false);
-        barcode.setOnClickListener(v -> requestPayment(id, "barra"));
-        content.addView(barcode, margins(-1, dp(75), 15));
-        Button pdf = button("▤  Visualizar boleto PDF", NAVY, false);
-        pdf.setOnClickListener(v -> requestPayment(id, "boleto"));
-        content.addView(pdf, margins(-1, dp(75), 15));
+        // Código bancário continua acessível pelo botão Imprimir código,
+        // e o PDF permanece disponível no fluxo de boleto/e-mail.
         // Exibir as modalidades para orientar o cliente, sem iniciar transação
         // nem chamar TEF/PPComp até homologação com o adquirente.
         TextView unavailable = label("Pagamento com cartão — ainda indisponível",
@@ -1049,21 +1068,32 @@ public class MainActivity extends Activity {
         content.addView(debit, margins(-1, dp(65), 15));
     }
 
-    /** IXC envia pelo próprio e-mail cadastrado; não precisa de SMTP nem WhatsApp no POS. */
+    /** Cliente escolhe e-mail do IXC ou um endereço alternativo validado por código. */
     private void emailBoleto(String id) {
         if (!isSessionValid()) {
             showHome();
             dialog("Sessão expirada. Faça nova consulta.");
             return;
         }
+        new AlertDialog.Builder(this)
+                .setTitle("Enviar boleto")
+                .setItems(new String[]{
+                        "Enviar ao e-mail cadastrado no IXC",
+                        "Enviar para outro e-mail"
+                }, (d, index) -> {
+                    if (index == 0) emailBoletoIXC(id);
+                    else emailBoletoAlternativo(id);
+                })
+                .setNegativeButton("Cancelar", null)
+                .show();
+    }
+
+    /** IXC escolhe o destinatário conforme cadastro, sem envio SMTP pelo POS. */
+    private void emailBoletoIXC(String id) {
         JSONObject emailInfo = invoiceResponse == null ? null
                 : invoiceResponse.optJSONObject("boleto_email");
-        if (emailInfo == null) {
-            dialog("Atualize primeiro o servidor ISM para usar o envio de boleto pelo IXC.");
-            return;
-        }
-        if (!emailInfo.optBoolean("disponivel", false)) {
-            dialog("O servidor ISM ainda não disponibiliza o envio pelo IXC. Atualize o backend.");
+        if (emailInfo == null || !emailInfo.optBoolean("disponivel", false)) {
+            dialog("Envio pelo IXC indisponível. Verifique a versão do servidor.");
             return;
         }
         new AlertDialog.Builder(this)
@@ -1086,13 +1116,129 @@ public class MainActivity extends Activity {
                     }
                     call("/api/v1/faturas/" + id + "/enviar-email", request, result -> {
                         if (result.optBoolean("solicitacao_aceita", false)) {
-                            // A API confirma o aceite do pedido, não a entrega.
                             dialog("Boleto encaminhado para envio.");
                         } else {
                             dialog("O IXC não confirmou o pedido de envio.");
                         }
                     });
                 }).show();
+    }
+
+    /** Código SMTP confirma posse do endereço antes de enviar dados financeiros. */
+    private void emailBoletoAlternativo(String id) {
+        if (!isSessionValid()) {
+            showHome();
+            dialog("Sessão expirada. Faça nova consulta.");
+            return;
+        }
+        LinearLayout form = col();
+        form.setPadding(dp(18), dp(8), dp(18), dp(4));
+        EditText address = new EditText(this);
+        address.setSingleLine(true);
+        address.setTextSize(16);
+        address.setHint("Digite o novo e-mail");
+        address.setInputType(InputType.TYPE_CLASS_TEXT
+                | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+        form.addView(address, margins(-1, dp(54), 12));
+        CheckBox consent = new CheckBox(this);
+        consent.setText("Confirmo que o titular autorizou enviar o boleto a este e-mail.");
+        consent.setTextSize(13);
+        consent.setTextColor(NAVY);
+        form.addView(consent, margins(-1, -2, 6));
+
+        AlertDialog confirm = new AlertDialog.Builder(this)
+                .setTitle("Enviar para outro e-mail")
+                .setMessage("Enviaremos um código para confirmar o novo endereço antes do boleto.")
+                .setView(form)
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Enviar código", null)
+                .create();
+        confirm.setOnShowListener(ignored -> confirm.getButton(
+                AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String email = address.getText().toString().trim().toLowerCase(java.util.Locale.ROOT);
+            if (email.length() > 254
+                    || !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+                address.setError("Informe um e-mail válido");
+                return;
+            }
+            if (!consent.isChecked()) {
+                dialog("Confirme a autorização do titular.");
+                return;
+            }
+            if (!isSessionValid()) {
+                confirm.dismiss();
+                dialog("Sessão expirada. Consulte o CPF novamente.");
+                return;
+            }
+            JSONObject request = new JSONObject();
+            try {
+                request.put("session", session);
+                request.put("email", email);
+                request.put("consentimento", true);
+            } catch (JSONException ex) {
+                dialog("Não foi possível preparar o envio.");
+                return;
+            }
+            confirm.dismiss();
+            hideKeyboard(address);
+            call("/api/v1/faturas/" + id + "/email-alternativo/solicitar-codigo",
+                    request, result -> showAlternateEmailCodeDialog(id, email));
+        }));
+        confirm.show();
+    }
+
+    private void showAlternateEmailCodeDialog(String id, String email) {
+        EditText code = new EditText(this);
+        code.setSingleLine(true);
+        code.setTextSize(18);
+        code.setHint("Código de seis dígitos");
+        code.setInputType(InputType.TYPE_CLASS_NUMBER);
+        code.setFilters(new android.text.InputFilter[]{
+                new android.text.InputFilter.LengthFilter(6)});
+        LinearLayout box = col();
+        box.setPadding(dp(18), dp(6), dp(18), dp(4));
+        box.addView(code, margins(-1, dp(54), 10));
+        AlertDialog confirm = new AlertDialog.Builder(this)
+                .setTitle("Confirmar novo e-mail")
+                .setMessage("Digite o código enviado para " + email + ".")
+                .setView(box)
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Enviar boleto", null)
+                .create();
+        confirm.setOnShowListener(ignored -> confirm.getButton(
+                AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            String typed = code.getText().toString().trim();
+            if (!typed.matches("[0-9]{6}")) {
+                code.setError("Código de seis dígitos");
+                return;
+            }
+            if (!isSessionValid()) {
+                confirm.dismiss();
+                dialog("Sessão expirada. Consulte o CPF novamente.");
+                return;
+            }
+            JSONObject request = new JSONObject();
+            try {
+                request.put("session", session);
+                request.put("email", email);
+                request.put("codigo", typed);
+                request.put("consentimento", true);
+            } catch (JSONException ex) {
+                dialog("Não foi possível preparar envio.");
+                return;
+            }
+            confirm.dismiss();
+            hideKeyboard(code);
+            call("/api/v1/faturas/" + id + "/email-alternativo/confirmar-envio",
+                    request, result -> {
+                        if (result.optBoolean("solicitacao_aceita", false)) {
+                            dialog("Boleto encaminhado para envio.");
+                        } else {
+                            dialog("Não foi possível confirmar o envio do boleto.");
+                        }
+                    });
+        }));
+        confirm.show();
     }
 
     /** Cupom estreito para a bobina térmica, sem abrir PDF ou Android PrintManager. */
@@ -1123,7 +1269,8 @@ public class MainActivity extends Activity {
                         issued.isEmpty() ? "" : dateBR(issued),
                         dateBR(due),
                         money(value),
-                        number
+                        number,
+                        result.optString("beneficiario", "")
                 );
             } catch (Exception ex) {
                 dialog("Não foi possível preparar o recibo térmico. Verifique os dados do IXC.");

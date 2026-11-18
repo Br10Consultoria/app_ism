@@ -68,20 +68,51 @@ jobs:
           ISM_RELEASE_KEY_ALIAS: ${{ github.event_name == 'workflow_dispatch' && secrets.ISM_RELEASE_KEY_ALIAS || '' }}
           ISM_RELEASE_KEY_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && secrets.ISM_RELEASE_KEY_PASSWORD || '' }}
         run: gradle -p android :app:assembleDebug :app:assembleRelease --no-daemon
+      - name: Assinar Release com certificado de homologação ISM (temporário)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Chave EXCLUSIVA do APK de teste, criada do zero neste job.
+          # Nunca substituir chave permanente de producao por esta chave.
+          PASS="$(openssl rand -hex 24)"
+          KEYSTORE="$RUNNER_TEMP/ism-homologacao.p12"
+          keytool -genkeypair -storetype PKCS12 \
+            -keystore "$KEYSTORE" -storepass "$PASS" \
+            -alias ism-homologacao -keypass "$PASS" \
+            -keyalg RSA -keysize 3072 -validity 365 \
+            -dname "CN=ISM Telecom, OU=Homologacao, O=ISM Telecom, C=BR" \
+            -noprompt >/dev/null 2>&1
+          chmod 600 "$KEYSTORE"
+          OUT="android/app/build/outputs/apk/release"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
+            --ks "$KEYSTORE" --ks-key-alias ism-homologacao \
+            --ks-pass "pass:$PASS" --key-pass "pass:$PASS" \
+            --out "$OUT/app-release-homologacao.apk" \
+            "$OUT/app-release-unsigned.apk"
+          unset PASS
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify \
+            --verbose --print-certs "$OUT/app-release-homologacao.apk"
+          echo "::warning::Assinatura Android de HOMOLOGACAO, temporaria e diferente em cada build. Nao usar para atualizacao/producao."
       - name: Validar modo Release, pacote e assinatura
         id: release_apk
         shell: bash
         run: |
           set -euo pipefail
           OUT="android/app/build/outputs/apk/release"
-          if [[ -f "$OUT/app-release.apk" ]]; then
+          if [[ -f "$OUT/app-release-homologacao.apk" ]]; then
+            APK="$OUT/app-release-homologacao.apk"
+            ARTIFACT="ism-telecom-v0.12.3-gpos780-988b-RELEASE-ASSINADO-HOMOLOGACAO"
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
+            echo "::warning::Certificado autoassinado ISM para TESTE, nao validado pela Gertec e nao reutilizavel em builds futuros."
+          elif [[ -f "$OUT/app-release.apk" ]]; then
             APK="$OUT/app-release.apk"
-            ARTIFACT="ism-telecom-v0.12.2-gpos780-988b-release-assinado"
+            ARTIFACT="ism-telecom-v0.12.3-gpos780-988b-release-assinado"
             "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
             echo "APK Release com assinatura Android verificada."
           elif [[ -f "$OUT/app-release-unsigned.apk" ]]; then
             APK="$OUT/app-release-unsigned.apk"
-            ARTIFACT="ism-telecom-v0.12.2-gpos780-988b-release-NAO-ASSINADO"
+            ARTIFACT="ism-telecom-v0.12.3-gpos780-988b-release-NAO-ASSINADO"
             echo "::notice::APK Release sem assinatura Android. Nao instalar diretamente; confirmar com Gertec se o robo aceita APK unsigned."
           else
             echo "::error::Nenhum APK Release gerado."
@@ -89,18 +120,18 @@ jobs:
           fi
           BADGING="$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK")"
           echo "$BADGING" | grep -q "name='br.com.ismtelecom.pos'"
-          echo "$BADGING" | grep -q "versionCode='24'"
+          echo "$BADGING" | grep -q "versionCode='25'"
           if echo "$BADGING" | grep -q '^application-debuggable'; then
             echo "::error::O APK esta em modo debug e sera rejeitado pela Gertec."
             exit 1
           fi
-          echo "Release verificado: android:debuggable nao ativo, pacote ISM, versionCode 24."
+          echo "Release verificado: android:debuggable nao ativo, pacote ISM, versionCode 25."
           echo "path=$APK" >> "$GITHUB_OUTPUT"
           echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
       - name: Disponibilizar APK Debug somente para testes na maquineta
         uses: actions/upload-artifact@v4
         with:
-          name: ism-telecom-v0.12.2-gpos780-988b-DEBUG-TESTES
+          name: ism-telecom-v0.12.3-gpos780-988b-DEBUG-TESTES
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
