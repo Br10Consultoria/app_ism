@@ -1029,7 +1029,7 @@ public class MainActivity extends Activity {
     }
 
 
-    /** Opções claras em cards, sem oferecer cartão antes da homologação TEF. */
+    /** Opções em cards: PIX e cartão (crédito/débito via SiTef). */
     private void showPaymentOptions(String id) {
         if (!isSessionValid()) {
             showHome(); dialog("Sessão expirada. Faça nova consulta."); return;
@@ -1045,19 +1045,41 @@ public class MainActivity extends Activity {
         content.addView(pix, margins(-1, dp(75), 15));
         // Código bancário continua acessível pelo botão Imprimir código,
         // e o PDF permanece disponível no fluxo de boleto/e-mail.
-        // Exibir as modalidades para orientar o cliente, sem iniciar transação
-        // nem chamar TEF/PPComp até homologação com o adquirente.
-        TextView unavailable = label("Pagamento com cartão — ainda indisponível",
-                13, MUTED, true);
-        content.addView(unavailable, margins(-1, -2, 10));
-        Button credit = button("Cartão de crédito (em breve)", NAVY, false);
-        credit.setEnabled(false);
-        credit.setContentDescription("Cartão de crédito: indisponível");
+        // Cartão via CliSiTef (SiTef/GetNet): tela própria, sem alterar PIX/boleto.
+        TextView cardTitle = label("Pagamento com cartão", 13, MUTED, true);
+        content.addView(cardTitle, margins(-1, -2, 10));
+        Button credit = button("Cartão de crédito", NAVY, false);
+        credit.setContentDescription("Pagar com cartão de crédito");
+        credit.setOnClickListener(v -> startCardPayment(id, SitefPaymentActivity.MODALIDADE_CREDITO));
         content.addView(credit, margins(-1, dp(65), 10));
-        Button debit = button("Cartão de débito (em breve)", NAVY, false);
-        debit.setEnabled(false);
-        debit.setContentDescription("Cartão de débito: indisponível");
+        Button debit = button("Cartão de débito", NAVY, false);
+        debit.setContentDescription("Pagar com cartão de débito");
+        debit.setOnClickListener(v -> startCardPayment(id, SitefPaymentActivity.MODALIDADE_DEBITO));
         content.addView(debit, margins(-1, dp(65), 15));
+    }
+
+    /** Abre o pagamento SiTef com o valor da fatura retornado pelo IXC. */
+    private void startCardPayment(String id, int modalidade) {
+        if (!isSessionValid()) {
+            showHome(); dialog("Sessão expirada. Faça nova consulta."); return;
+        }
+        String valor = "";
+        JSONArray faturas = invoiceResponse == null ? null : invoiceResponse.optJSONArray("faturas");
+        if (faturas != null) {
+            for (int k = 0; k < faturas.length(); k++) {
+                JSONObject f = faturas.optJSONObject(k);
+                if (f != null && id.equals(f.optString("id"))) {
+                    valor = f.optString("valor", "");
+                    break;
+                }
+            }
+        }
+        if (valor.isEmpty()) {
+            dialog("Não foi possível obter o valor da fatura. Faça nova consulta.");
+            return;
+        }
+        stopPixAutoCheck();
+        SitefPaymentActivity.start(this, id, valor, modalidade);
     }
 
     /** Cliente escolhe e-mail do IXC ou um endereço alternativo validado por código. */

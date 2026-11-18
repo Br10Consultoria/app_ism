@@ -38,6 +38,8 @@ jobs:
           "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
       - name: Carregar SDK Gertec GPOS780 988B e logo ISM (checksums validados)
         run: python3 scripts/install_gertec_sdk.py
+      - name: Carregar CliSiTef GPOS780 (SiTef credito/debito, checksum validado)
+        run: python3 scripts/install_clisitef_sdk.py
       - name: Ativar AndroidX no CI
         run: echo "android.useAndroidX=true" >> android/gradle.properties
       - name: Preparar chave privada Release (somente execucao manual)
@@ -102,17 +104,17 @@ jobs:
           OUT="android/app/build/outputs/apk/release"
           if [[ -f "$OUT/app-release-homologacao.apk" ]]; then
             APK="$OUT/app-release-homologacao.apk"
-            ARTIFACT="ism-telecom-v0.12.8-gpos780-988b-RELEASE-ASSINADO-HOMOLOGACAO"
+            ARTIFACT="ism-telecom-v0.13.0-sitef-gpos780-988b-RELEASE-ASSINADO-HOMOLOGACAO"
             "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
             echo "::warning::Certificado autoassinado ISM para TESTE, nao validado pela Gertec e nao reutilizavel em builds futuros."
           elif [[ -f "$OUT/app-release.apk" ]]; then
             APK="$OUT/app-release.apk"
-            ARTIFACT="ism-telecom-v0.12.8-gpos780-988b-release-assinado"
+            ARTIFACT="ism-telecom-v0.13.0-sitef-gpos780-988b-release-assinado"
             "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
             echo "APK Release com assinatura Android verificada."
           elif [[ -f "$OUT/app-release-unsigned.apk" ]]; then
             APK="$OUT/app-release-unsigned.apk"
-            ARTIFACT="ism-telecom-v0.12.8-gpos780-988b-release-NAO-ASSINADO"
+            ARTIFACT="ism-telecom-v0.13.0-sitef-gpos780-988b-release-NAO-ASSINADO"
             echo "::notice::APK Release sem assinatura Android. Nao instalar diretamente; confirmar com Gertec se o robo aceita APK unsigned."
           else
             echo "::error::Nenhum APK Release gerado."
@@ -120,12 +122,15 @@ jobs:
           fi
           BADGING="$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK")"
           echo "$BADGING" | grep -q "name='br.com.ismtelecom.pos'"
-          echo "$BADGING" | grep -q "versionCode='28'"
+          echo "$BADGING" | grep -q "versionCode='29'"
           if echo "$BADGING" | grep -q '^application-debuggable'; then
             echo "::error::O APK esta em modo debug e sera rejeitado pela Gertec."
             exit 1
           fi
-          echo "Release verificado: android:debuggable nao ativo, pacote ISM, versionCode 28."
+          for ABI in arm64-v8a armeabi-v7a; do
+            unzip -l "$APK" | grep -q "lib/$ABI/libclisitef.so" || { echo "::error::libclisitef.so ausente ($ABI)"; exit 1; }
+          done
+          echo "Release verificado: android:debuggable nao ativo, pacote ISM, versionCode 29."
           echo "path=$APK" >> "$GITHUB_OUTPUT"
           echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
       - name: Disponibilizar APK Release com estado de assinatura explicito
