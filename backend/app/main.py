@@ -294,6 +294,7 @@ async def faturas(body: Lookup):
         raise HTTPException(502, "Erro ao consultar cobranças no IXC")
 
 
+@app.post("/api/v1/cartao/disponibilidade", include_in_schema=False)
 @app.get("/api/v1/cartao/disponibilidade",
          dependencies=[Depends(require_terminal), Depends(throttle)])
 async def disponibilidade_tef():
