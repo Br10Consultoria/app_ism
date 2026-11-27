@@ -3,6 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Visibilidade Android 11+ para Intent oficial de pagamento m-SiTef -->
+    <queries>
+        <intent><action android:name="br.com.softwareexpress.sitef.msitef.ACTIVITY_CLISITEF" /></intent>
+    </queries>
     <!-- GEDI 2.2.6 requer essas permissões para outros módulos do SDK,
          mas consultar SN e imprimir não requer permissões privilegiadas. -->
     <uses-permission android:name="android.permission.SET_TIME" tools:node="remove" />
